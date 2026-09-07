@@ -1,0 +1,567 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Deye Solar Optimizer Analytics</title>
+<style>
+:root{
+  color-scheme:light;
+  --plane:#f9f9f7; --surface:#fcfcfb;
+  --ink:#0b0b0b; --ink-2:#52514e; --muted:#898781;
+  --grid:#e1e0d9; --axis:#c3c2b7; --border:rgba(11,11,11,0.10);
+  --s1:#2a78d6; --s2:#eb6834; --s3:#1baf7a; --s4:#eda100;
+  --good:#0ca30c; --warning:#fab219; --serious:#ec835a; --critical:#d03b3b;
+  --good-ink:#006300;
+  --font:system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:ui-monospace,SFMono-Regular,Consolas,monospace;
+}
+@media (prefers-color-scheme:dark){:root:where(:not([data-theme="light"])){
+  color-scheme:dark;
+  --plane:#0d0d0d; --surface:#1a1a19;
+  --ink:#ffffff; --ink-2:#c3c2b7; --muted:#898781;
+  --grid:#2c2c2a; --axis:#383835; --border:rgba(255,255,255,0.10);
+  --s1:#3987e5; --s2:#d95926; --s3:#199e70; --s4:#c98500;
+  --good-ink:#0ca30c;
+}}
+:root[data-theme="dark"]{
+  color-scheme:dark;
+  --plane:#0d0d0d; --surface:#1a1a19;
+  --ink:#ffffff; --ink-2:#c3c2b7; --muted:#898781;
+  --grid:#2c2c2a; --axis:#383835; --border:rgba(255,255,255,0.10);
+  --s1:#3987e5; --s2:#d95926; --s3:#199e70; --s4:#c98500;
+  --good-ink:#0ca30c;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--plane);color:var(--ink);font-family:var(--font);font-size:14px;line-height:1.45}
+.wrap{max-width:1280px;margin:auto;padding:20px}
+h1{font-size:20px;margin:0}
+h2{font-size:15px;font-weight:650;margin:26px 0 10px;letter-spacing:.01em}
+h3{font-size:13px;font-weight:650;margin:0 0 8px;color:var(--ink-2)}
+.top{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:6px}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px;margin:10px 0}
+.tile .k{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.04em}
+.tile .v{font-size:26px;font-weight:660;font-variant-numeric:tabular-nums;margin-top:2px}
+.tile .s{font-size:12px;color:var(--ink-2);margin-top:2px}
+.muted{color:var(--muted)} .small{font-size:12px} .mono{font-family:var(--mono)}
+.pill{display:inline-block;padding:3px 9px;border-radius:999px;border:1px solid var(--border);color:var(--ink-2);font-size:12px}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+button,input,select{font:inherit;color:inherit;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:6px 10px}
+button{cursor:pointer} input[type=range]{width:240px;padding:0}
+.tablewrap{overflow-x:auto;border:1px solid var(--border);border-radius:12px;background:var(--surface)}
+table{width:100%;border-collapse:collapse;min-width:640px}
+th,td{padding:8px 10px;border-bottom:1px solid var(--grid);text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+th{font-size:12px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.03em}
+th:first-child,td:first-child{text-align:left}
+tr:last-child td{border-bottom:none}
+.banner{display:flex;gap:10px;align-items:flex-start;border-radius:12px;padding:12px 14px;margin:10px 0;border:1px solid var(--border)}
+.banner .ic{font-size:16px;line-height:1.2}
+.banner.crit{background:color-mix(in srgb,var(--critical) 12%,var(--surface));border-color:var(--critical)}
+.banner.warn{background:color-mix(in srgb,var(--warning) 16%,var(--surface));border-color:var(--serious)}
+.banner.ok{background:var(--surface)}
+.banner b{display:block}
+.figure{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:12px 12px 6px;position:relative}
+.figure figcaption{font-size:12px;color:var(--muted);margin:0 0 6px}
+svg.chart{width:100%;height:auto;display:block;overflow:visible}
+.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--ink-2);margin:2px 0 6px}
+.legend span{display:inline-flex;gap:6px;align-items:center}
+.swatch{width:14px;height:3px;border-radius:2px;display:inline-block}
+.tip{position:absolute;pointer-events:none;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:7px 9px;font-size:12px;box-shadow:0 4px 14px rgba(0,0,0,.13);opacity:0;transition:opacity .08s;min-width:150px;z-index:5}
+.tip .t{color:var(--muted);margin-bottom:3px}
+.tip .r{display:flex;justify-content:space-between;gap:12px;font-variant-numeric:tabular-nums}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:3px 12px;font-size:13px}
+.kv dt{color:var(--muted)} .kv dd{margin:0;font-variant-numeric:tabular-nums}
+.note{color:var(--ink-2);font-size:12px;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:12px;margin-top:20px}
+.tabs{display:flex;gap:4px;margin:14px 0 4px;border-bottom:1px solid var(--border)}
+.tabs button{background:none;border:none;border-bottom:2px solid transparent;border-radius:0;padding:8px 14px;color:var(--ink-2);font-weight:600;font-size:13px}
+.tabs button[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--s1)}
+.tabs button:hover{color:var(--ink)}
+.gsw{width:12px;height:12px;border-radius:3px;display:inline-block;vertical-align:-1px;margin-right:6px}
+.st-open{background:var(--good)} .st-writing{background:var(--muted)}
+.st-blocked_cooldown{background:var(--warning)} .st-blocked_backoff{background:var(--serious)}
+.st-blocked_cloud{background:var(--critical)} .st-no_data{background:var(--grid)}
+.err{background:color-mix(in srgb,var(--critical) 12%,var(--surface));border:1px solid var(--critical);border-radius:10px;padding:10px 12px;margin:10px 0;font-size:13px}
+</style></head>
+<body><div class="wrap">
+
+<div class="top">
+  <h1>Deye Solar Optimizer</h1>
+  <span class="pill">read-only analytics</span>
+  <span style="flex:1"></span>
+  <label class="small muted" for="date">Date</label><input id="date" type="date">
+  <button id="refresh" type="button">Refresh</button>
+  <span id="stamp" class="small muted"></span>
+</div>
+<div id="errors"></div>
+
+<div class="tabs" role="tablist">
+  <button type="button" role="tab" id="tab-overview" aria-selected="true" aria-controls="panel-overview">Overview</button>
+  <button type="button" role="tab" id="tab-control" aria-selected="false" aria-controls="panel-control">Writes &amp; windows</button>
+</div>
+
+<div id="panel-overview" role="tabpanel" aria-labelledby="tab-overview">
+<h2>Control state</h2>
+<div id="controlbanner"></div>
+<div id="live" class="grid"></div>
+<div id="decision" class="card small"></div>
+
+<h2>Today in power</h2>
+<figure class="figure" id="fig-power">
+  <figcaption>Inverter power and the confirmed grid export cap. Curtailment shows up as PV held down while the export line sits below the cap. Faded segments are reconstructed from cumulative meters across telemetry gaps &mdash; their spikes are an artifact of sample spacing, not measured power.</figcaption>
+  <div class="legend" id="legend-power"></div>
+  <svg id="chart-power" class="chart" viewBox="0 0 1000 300" role="img" aria-label="Intraday PV, load, export and export cap"></svg>
+  <div class="tip" id="tip-power"></div>
+</figure>
+<figure class="figure" id="fig-soc" style="margin-top:10px">
+  <figcaption>Battery state of charge. The dashed line is the curtailment threshold: at or above it the battery can no longer absorb surplus.</figcaption>
+  <svg id="chart-soc" class="chart" viewBox="0 0 1000 170" role="img" aria-label="Battery state of charge over the day"></svg>
+  <div class="tip" id="tip-soc"></div>
+</figure>
+
+<h2>PV forecast vs achieved</h2>
+<figure class="figure" id="fig-fc">
+  <figcaption>Cumulative energy on a shared 24-hour axis, so a partial day reads as a partial day.</figcaption>
+  <div class="legend" id="legend-fc"></div>
+  <svg id="chart-fc" class="chart" viewBox="0 0 1000 260" role="img" aria-label="Cumulative PV forecast versus achieved"></svg>
+  <div class="tip" id="tip-fc"></div>
+</figure>
+<div id="forecastmeta" class="card small" style="margin-top:10px"></div>
+
+<h2>Actual vs counterfactual policies</h2>
+<div class="card" style="margin-bottom:10px">
+  <div class="row"><b class="small">Static export-cap calculator</b>
+    <input id="cap" type="range" min="0" max="1000" step="100" value="500" aria-label="Static export cap in watts">
+    <span id="capv" class="mono" style="font-size:18px;font-weight:650">500 W</span></div>
+  <div id="custom" class="small muted" style="margin-top:6px"></div>
+</div>
+<div id="replay" class="tablewrap"></div>
+
+<h2>Rolling score</h2>
+<div id="history" class="grid"></div>
+
+<div class="grid" style="margin-top:16px">
+  <div class="card"><h3>Battery stress</h3><dl class="kv" id="aging"></dl></div>
+  <div class="card"><h3>Curtailment estimate</h3><dl class="kv" id="curtail"></dl></div>
+  <div class="card"><h3>Morning learner</h3><dl class="kv" id="morning"></dl></div>
+  <div class="card"><h3>Economics</h3><dl class="kv" id="econ"></dl></div>
+</div>
+
+<h2>MPPT learning</h2>
+<div id="mppt" class="tablewrap"></div>
+
+<h2>Forecast revisions</h2>
+<div id="revisions" class="tablewrap"></div>
+</div><!-- /panel-overview -->
+
+<div id="panel-control" role="tabpanel" aria-labelledby="tab-control" hidden>
+<h2>Right now</h2>
+<div id="gatenow"></div>
+<div id="gatetiles" class="grid"></div>
+
+<h2>Write windows through the day</h2>
+<figure class="figure" id="fig-gate">
+  <figcaption>When the controller was free to write, and what was holding it back when it was not. Reconstructed from the action recorded on every control tick. Markers below the band are write attempts.</figcaption>
+  <div class="legend" id="legend-gate"></div>
+  <svg id="chart-gate" class="chart" viewBox="0 0 1000 150" role="img" aria-label="Write window availability through the day"></svg>
+  <div class="tip" id="tip-gate"></div>
+</figure>
+
+<h2>Write attempts</h2>
+<div id="writes" class="tablewrap"></div>
+
+<h2>Time by gate state</h2>
+<div id="gatesummary" class="tablewrap"></div>
+
+<h2>Blocked intervals</h2>
+<div id="gateintervals" class="tablewrap"></div>
+</div><!-- /panel-control -->
+
+<div class="note">Counterfactual replay uses observed and cumulative-meter-reconstructed PV/load; long DeyeCloud gaps reduce timing confidence. Curtailment is a model estimate, not irradiance-meter data. The oracle has perfect hindsight and is a benchmark, not a live control policy.</div>
+</div>
+
+<script>
+const $=x=>document.getElementById(x);
+const fmt=(x,n=2)=>(x===null||x===undefined||Number.isNaN(Number(x)))?'—':Number(x).toFixed(n);
+const S=['--s1','--s2','--s3','--s4'].map(v=>getComputedStyle(document.documentElement).getPropertyValue(v).trim());
+const css=v=>getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+let TZ='UTC', ERRORS=new Map();
+
+function showErrors(){
+  $('errors').innerHTML=[...ERRORS.entries()].map(([k,v])=>
+    `<div class="err"><b>${k} unavailable.</b> ${v} — the figures below may be stale.</div>`).join('');
+}
+async function get(u,label){
+  try{
+    const r=await fetch(u,{cache:'no-store'});
+    const j=await r.json();
+    if(!r.ok) throw new Error(j.message||j.error||('HTTP '+r.status));
+    ERRORS.delete(label); showErrors(); return j;
+  }catch(e){ ERRORS.set(label,String(e.message||e)); showErrors(); throw e; }
+}
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+function tile(k,v,s=''){return `<div class="card tile"><div class="k">${esc(k)}</div><div class="v">${v}</div><div class="s">${esc(s)}</div></div>`}
+function kv(pairs){return pairs.map(([k,v])=>`<dt>${esc(k)}</dt><dd>${v}</dd>`).join('')}
+function table(rows,cols){
+  if(!rows.length) return '<div class="card small muted">No data yet.</div>';
+  return `<table><thead><tr>${cols.map(c=>`<th>${esc(c[0])}</th>`).join('')}</tr></thead><tbody>${
+    rows.map(r=>`<tr>${cols.map(c=>`<td>${c[1](r)}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
+}
+// Times arrive as site-local ISO strings; render the clock face without re-zoning.
+// A stale sample must read as stale: switch to hours past 90 minutes rather than
+// showing a large minute count that scans as small.
+const telAge=m=>m==null?'—':(Number(m)<90?`${Number(m).toFixed(0)} min`:`${(Number(m)/60).toFixed(1)} h`);
+const hhmm=iso=>{const m=/T(\d{2}:\d{2})/.exec(String(iso)); return m?m[1]:'—'};
+const localDateISO=()=>{const p=new Intl.DateTimeFormat('en-CA',{timeZone:TZ,year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date());
+  const g=t=>p.find(x=>x.type===t).value; return `${g('year')}-${g('month')}-${g('day')}`};
+const minsOfDay=iso=>{const m=/T(\d{2}):(\d{2})/.exec(String(iso)); return m?(+m[1]*60 + +m[2]):null};
+
+/* ---- charting -------------------------------------------------------------
+   Every chart on this page shares one 0..1440 minute-of-day domain, so series
+   that cover different parts of the day cannot be stretched onto each other. */
+const PAD={l:56,r:14,t:12,b:24};
+function xScale(w){return m=>PAD.l+(m/1440)*(w-PAD.l-PAD.r)}
+function yScale(h,max){return v=>PAD.t+(h-PAD.t-PAD.b)*(1-(v/(max||1)))}
+function niceMax(v){if(!(v>0))return 1;const e=Math.pow(10,Math.floor(Math.log10(v)));const n=v/e;return (n<=1?1:n<=2?2:n<=5?5:10)*e}
+function path(points,x,y){let d='';points.forEach((p,i)=>{d+=(i?'L':'M')+x(p.m).toFixed(1)+' '+y(p.v).toFixed(1)});return d}
+function stepPath(points,x,y,endM){
+  if(!points.length)return '';
+  let d='',prevY=null;
+  for(const p of points){
+    const px=x(p.m),py=y(p.v);
+    if(prevY===null){d+=`M${px.toFixed(1)} ${py.toFixed(1)}`}
+    else{d+=`L${px.toFixed(1)} ${prevY.toFixed(1)}L${px.toFixed(1)} ${py.toFixed(1)}`}
+    prevY=py;
+  }
+  d+=`L${x(endM).toFixed(1)} ${prevY.toFixed(1)}`;return d;
+}
+function frame(w,h,max,unit,hours=true){
+  let g='';const y=yScale(h,max);
+  for(let i=0;i<=4;i++){const v=max*i/4,yy=y(v);
+    g+=`<line x1="${PAD.l}" x2="${w-PAD.r}" y1="${yy.toFixed(1)}" y2="${yy.toFixed(1)}" stroke="${css('--grid')}" stroke-width="1"/>`;
+    g+=`<text x="${PAD.l-8}" y="${(yy+4).toFixed(1)}" font-size="11" text-anchor="end" fill="${css('--muted')}">${v>=1000?(v/1000).toFixed(v%1000?1:0)+'k':(max<10?v.toFixed(1):v.toFixed(0))}</text>`}
+  g+=`<text x="4" y="${PAD.t+8}" font-size="11" fill="${css('--muted')}">${unit}</text>`;
+  if(hours){const x=xScale(w);
+    for(let hh=0;hh<=24;hh+=3){g+=`<text x="${x(hh*60).toFixed(1)}" y="${h-6}" font-size="11" text-anchor="middle" fill="${css('--muted')}">${String(hh).padStart(2,'0')}</text>`}}
+  g+=`<line x1="${PAD.l}" x2="${w-PAD.r}" y1="${(h-PAD.b).toFixed(1)}" y2="${(h-PAD.b).toFixed(1)}" stroke="${css('--axis')}" stroke-width="1"/>`;
+  return g;
+}
+function legend(el,items){el.innerHTML=items.map(i=>
+  `<span><i class="swatch" style="background:${i.color}${i.dash?';height:0;border-top:3px dashed '+i.color:''}"></i>${esc(i.name)}</span>`).join('')}
+
+function attachHover(svgId,tipId,series,w,h,max,unit){
+  const svg=$(svgId),tip=$(tipId);
+  const x=xScale(w),xInv=px=>((px-PAD.l)/(w-PAD.l-PAD.r))*1440;
+  function move(ev){
+    const r=svg.getBoundingClientRect();
+    const px=((ev.clientX-r.left)/r.width)*w;
+    if(px<PAD.l||px>w-PAD.r){tip.style.opacity=0;return}
+    const m=xInv(px);
+    const rows=series.map(s=>{
+      if(!s.points.length)return null;
+      let best=s.points[0];for(const p of s.points){if(Math.abs(p.m-m)<Math.abs(best.m-m))best=p}
+      return Math.abs(best.m-m)>45?null:{name:s.name,color:s.color,v:best.v,m:best.m};
+    }).filter(Boolean);
+    if(!rows.length){tip.style.opacity=0;return}
+    const t=rows[0].m;
+    svg.querySelector('.cross').setAttribute('x1',x(t));svg.querySelector('.cross').setAttribute('x2',x(t));
+    svg.querySelector('.cross').setAttribute('opacity','1');
+    tip.innerHTML=`<div class="t">${String(Math.floor(t/60)).padStart(2,'0')}:${String(Math.round(t%60)).padStart(2,'0')}</div>`+
+      rows.map(r=>`<div class="r"><span><i class="swatch" style="background:${r.color}"></i> ${esc(r.name)}</span><b>${fmt(r.v,unit==='%'?1:0)} ${unit}</b></div>`).join('');
+    tip.style.opacity=1;
+    const left=Math.min(Math.max(0,(x(t)/w)*r.width-75),r.width-170);
+    tip.style.left=left+'px';tip.style.top='34px';
+  }
+  svg.addEventListener('mousemove',move);
+  svg.addEventListener('mouseleave',()=>{tip.style.opacity=0;const c=svg.querySelector('.cross');if(c)c.setAttribute('opacity','0')});
+}
+
+function drawPower(tl){
+  const w=1000,h=300,svg=$('chart-power');
+  const pts=(tl&&tl.points)||[];
+  const hard=(tl&&tl.hard_limit_w)||1000;
+  const mk=key=>pts.map(p=>({m:minsOfDay(p.time),v:Number(p[key])||0,syn:!!p.synthesized})).filter(p=>p.m!==null);
+  const segments=points=>{const out=[];let cur=null;
+    for(const p of points){const syn=!!p.syn;
+      if(!cur||cur.syn!==syn){if(cur)cur.pts.push(p);cur={syn,pts:[p]};out.push(cur)}else{cur.pts.push(p)}}
+    return out};
+  const series=[
+    {name:'PV',color:S[0],points:mk('pv_w')},
+    {name:'Load',color:S[1],points:mk('load_w')},
+    {name:'Grid export',color:S[2],points:mk('export_w')},
+  ];
+  const day=$('date').value;
+  const steps=((tl&&tl.setting_steps)||[]).map(s=>({
+    m:String(s.time).slice(0,10)<day?0:(minsOfDay(s.time)??0),
+    v:Number(s.setting_w)||0
+  })).sort((a,b)=>a.m-b.m);
+  const max=niceMax(Math.max(hard,...series.flatMap(s=>s.points.map(p=>p.v)),1)*1.05);
+  const y=yScale(h,max),x=xScale(w);
+  let g=frame(w,h,max,'W');
+  g+=`<line class="cross" x1="0" x2="0" y1="${PAD.t}" y2="${h-PAD.b}" stroke="${css('--axis')}" stroke-width="1" opacity="0"/>`;
+  if(steps.length){
+    const endM=pts.length?Math.max(...pts.map(p=>minsOfDay(p.time)||0)):1440;
+    g+=`<path d="${stepPath(steps,x,y,endM)}" fill="none" stroke="${S[3]}" stroke-width="2" stroke-dasharray="6 4"/>`;
+  }
+  series.forEach(s=>{segments(s.points).forEach(seg=>{
+    if(seg.pts.length<2)return;
+    g+=`<path d="${path(seg.pts,x,y)}" fill="none" stroke="${s.color}" stroke-width="2" stroke-linejoin="round" opacity="${seg.syn?0.32:1}"/>`;
+  })});
+  // Direct labels at each series end, but only where they do not collide: at dusk
+  // every series converges on zero, and four stacked labels there say nothing.
+  // The always-present legend carries identity for the rest.
+  const placed=[];
+  series.concat(steps.length?[{name:'Export cap',color:S[3],points:[{m:Math.min(1435,steps[steps.length-1].m),v:steps[steps.length-1].v}]}]:[])
+    .map(s=>s.points.length?{name:s.name,p:s.points[s.points.length-1]}:null).filter(Boolean)
+    .sort((a,b)=>y(a.p.v)-y(b.p.v))
+    .forEach(({name,p})=>{
+      const ly=y(p.v)-5;
+      if(placed.some(o=>Math.abs(o-ly)<14))return;
+      placed.push(ly);
+      g+=`<text x="${Math.min(w-PAD.r-2,x(p.m)+6).toFixed(1)}" y="${ly.toFixed(1)}" font-size="11" fill="${css('--ink-2')}" text-anchor="end">${esc(name)}</text>`;
+    });
+  svg.innerHTML=g;
+  legend($('legend-power'),[{name:'PV',color:S[0]},{name:'Load',color:S[1]},{name:'Grid export',color:S[2]},{name:'Export cap (confirmed setting)',color:S[3],dash:true}]);
+  attachHover('chart-power','tip-power',series,w,h,max,'W');
+}
+
+function drawSoc(tl,cfg){
+  const w=1000,h=170,svg=$('chart-soc');
+  const pts=((tl&&tl.points)||[]).map(p=>({m:minsOfDay(p.time),v:p.soc_pct})).filter(p=>p.m!==null&&p.v!==null);
+  const y=yScale(h,100),x=xScale(w);
+  let g=frame(w,h,100,'%');
+  const thr=Number(cfg?.day_strategy?.curtailment_override_soc_pct ?? 98);
+  g+=`<line x1="${PAD.l}" x2="${w-PAD.r}" y1="${y(thr).toFixed(1)}" y2="${y(thr).toFixed(1)}" stroke="${css('--critical')}" stroke-width="1" stroke-dasharray="5 4"/>`;
+  g+=`<text x="${w-PAD.r}" y="${(y(thr)-5).toFixed(1)}" font-size="11" text-anchor="end" fill="${css('--critical')}">curtailment threshold ${thr}%</text>`;
+  g+=`<line class="cross" x1="0" x2="0" y1="${PAD.t}" y2="${h-PAD.b}" stroke="${css('--axis')}" stroke-width="1" opacity="0"/>`;
+  if(pts.length)g+=`<path d="${path(pts,x,y)}" fill="none" stroke="${S[0]}" stroke-width="2" stroke-linejoin="round"/>`;
+  svg.innerHTML=g;
+  attachHover('chart-soc','tip-soc',[{name:'SOC',color:S[0],points:pts}],w,h,100,'%');
+}
+
+function drawForecast(f){
+  const w=1000,h=260,svg=$('chart-fc');
+  const conv=arr=>(arr||[]).map(p=>({m:minsOfDay(p.time),v:Number(p.kwh)||0})).filter(p=>p.m!==null);
+  const series=[{name:'Achieved',color:S[0],points:conv(f&&f.actual_cumulative)}]
+    .concat(((f&&f.forecast_series)||[]).slice(0,3).map((s,i)=>({name:'Forecast ('+(s.name||'')+')',color:S[i+1],points:conv(s.points)})));
+  const max=niceMax(Math.max(1,...series.flatMap(s=>s.points.map(p=>p.v))));
+  const y=yScale(h,max),x=xScale(w);
+  let g=frame(w,h,max,'kWh');
+  g+=`<line class="cross" x1="0" x2="0" y1="${PAD.t}" y2="${h-PAD.b}" stroke="${css('--axis')}" stroke-width="1" opacity="0"/>`;
+  series.forEach(s=>{if(s.points.length)g+=`<path d="${path(s.points,x,y)}" fill="none" stroke="${s.color}" stroke-width="2" stroke-linejoin="round"/>`});
+  series.forEach(s=>{if(!s.points.length)return;const p=s.points[s.points.length-1];
+    g+=`<circle cx="${x(p.m).toFixed(1)}" cy="${y(p.v).toFixed(1)}" r="4" fill="${s.color}"/>`+
+       `<text x="${(x(p.m)-8).toFixed(1)}" y="${(y(p.v)-8).toFixed(1)}" font-size="11" text-anchor="end" fill="${css('--ink-2')}">${esc(s.name)} ${fmt(p.v,1)}</text>`});
+  svg.innerHTML=g;
+  legend($('legend-fc'),series.map(s=>({name:s.name,color:s.color})));
+  attachHover('chart-fc','tip-fc',series,w,h,max,'kWh');
+}
+
+/* ---- panels --------------------------------------------------------------- */
+let CFG=null;
+async function loadConfig(){
+  CFG=await get('/api/config','Configuration');
+  TZ=(CFG.site&&CFG.site.timezone)||'UTC';
+  const hard=Number(CFG.grid?.export_hard_limit_w||1000);
+  const cap=$('cap');cap.max=String(hard);cap.value=String(Math.min(Number(cap.value),hard));
+  $('capv').textContent=cap.value+' W';
+  if(!$('date').value)$('date').value=localDateISO();
+}
+async function loadLive(){
+  const l=await get('/api/live','Live telemetry');
+  const c=l.control||{};
+  const soc=l.soc, hard=c.hard_limit_w||1000;
+  $('live').innerHTML=
+    tile('Export cap',`${fmt(c.current_setting_w,0)} <span class="muted" style="font-size:16px">/ ${hard} W</span>`,
+         `recommended ${fmt(c.recommended_w,0)} W · headroom ${fmt(c.export_headroom_w,0)} W`)+
+    tile('Battery',`${fmt(soc,0)}%`,`${Number(l.battery_w)<0?'charging':'discharging'} ${fmt(Math.abs(Number(l.battery_w||0)),0)} W`)+
+    tile('PV',`${fmt(l.pv_w,0)} W`,`today ${fmt(l.daily_pv_kwh,1)} kWh`)+
+    tile('Grid export',`${fmt(l.export_w,0)} W`,`load ${fmt(l.load_w,0)} W`)+
+    tile('Write budget',`${fmt(c.successful_writes_today,0)}/${fmt(c.max_successful_writes_per_day,0)}`,
+         `submissions ${fmt(c.order_submissions_today,0)}/${fmt(c.max_order_submissions_per_day,0)}`)+
+    tile('Telemetry',telAge(l.telemetry_age_minutes),`${c.telemetry_health||'—'} · last sample ${hhmm(l.logger_at)}`);
+
+  const d=l.decision||{}, p=l.day_plan||null;
+  let banner='';
+  if(c.curtailment_suspected){
+    banner=`<div class="banner crit"><span class="ic" aria-hidden="true">▲</span><div><b>Curtailment suspected — surplus PV is being thrown away.</b>
+      Battery is at ${fmt(soc,0)}% and no longer absorbing, PV is still producing ${fmt(l.pv_w,0)} W, and the export cap is
+      ${fmt(c.current_setting_w,0)} W of ${hard} W. Energy not exported in this state is lost.</div></div>`;
+  }else if(String(d.action||'').startsWith('blocked')){
+    banner=`<div class="banner warn"><span class="ic" aria-hidden="true">■</span><div><b>Control writes are blocked.</b>
+      ${esc(d.action)}${c.failed_order_retry_after?' · retry after '+hhmm(c.failed_order_retry_after):''}</div></div>`;
+  }else{
+    banner=`<div class="banner ok"><span class="ic" aria-hidden="true" style="color:var(--good)">●</span><div><b>Nominal.</b>
+      Export cap ${fmt(c.current_setting_w,0)} W matches recommendation ${fmt(c.recommended_w,0)} W.</div></div>`;
+  }
+  $('controlbanner').innerHTML=banner;
+  $('decision').innerHTML=`<dl class="kv">${kv([
+    ['Phase',esc(c.phase||d.phase||'—')],['Strategy',esc(c.strategy||'—')],
+    ['Decision reason',`<span class="mono">${esc(d.reason||'—')}</span>`],
+    ['Last action',`<span class="mono">${esc(d.action||'—')}</span>`],
+    ['Target SOC',fmt(d.target_soc,1)+'%'],
+    ['End-of-day target',p?fmt(p.end_of_day_target_soc_pct,1)+'% <span class="muted">'+esc(p.end_of_day_target_reason||'')+'</span>':'—'],
+    ['Reserve',p?fmt(p.reserve_kwh,2)+' kWh <span class="muted">'+esc(p.reserve_source||'')+'</span>':'—'],
+    ['Intraday PV bias',p?`<b>${fmt(p.intraday_bias,3)}\u00d7</b> <span class="muted">${esc(p.intraday_bias_source||'')}</span>`:'—'],
+    ['Remaining PV',p?fmt(p.raw_remaining_pv_kwh,2)+' kWh forecast \u2192 '+fmt(p.bias_corrected_pv_kwh,2)+' bias-corrected \u2192 <b>'+fmt(p.safe_remaining_pv_kwh,2)+'</b> after \u00d7'+fmt(p.safe_forecast_factor,2)+' safety':'—'],
+    ['Export budget',p?fmt(p.export_energy_budget_kwh,2)+' kWh <span class="muted">('+fmt(p.pv_surplus_kwh,2)+' PV + '+fmt(p.stored_surplus_kwh,2)+' stored)</span>':'—'],
+    ['Allocation',p?'<span class="mono">'+esc(p.allocation_mode||'')+'</span> · sustains cap '+fmt(p.cap_sustain_hours,2)+' h of '+fmt(p.hours_to_sunset,2)+' h':'—'],
+  ])}</dl>`;
+  $('stamp').textContent='updated '+hhmm(l.now);
+}
+async function loadHistory(){
+  const h=await get('/api/history?days='+(CFG?.analytics?.history_days||30),'History');
+  const t=h.totals||{};
+  const dExp=(t.actual_export_kwh||0)-(t.static_export_kwh||0);
+  const dCost=(t.actual_cost_eur||0)-(t.static_cost_eur||0);
+  $('history').innerHTML=
+    tile('Actual export',fmt(t.actual_export_kwh)+' kWh',h.days+' days with data')+
+    tile('Static 1kW replay',fmt(t.static_export_kwh)+' kWh','counterfactual')+
+    tile('Export delta',`<span style="color:${dExp<0?'var(--critical)':'var(--good-ink)'}">${dExp>=0?'+':''}${fmt(dExp)} kWh</span>`,'actual − static')+
+    tile('Import delta',fmt((t.actual_import_kwh||0)-(t.static_import_kwh||0))+' kWh','actual − static')+
+    tile('Cost delta',`<span style="color:${dCost<=0?'var(--good-ink)':'var(--critical)'}">${dCost>=0?'+':''}${fmt(dCost,2)} €</span>`,'negative = actual cheaper');
+}
+async function loadDay(custom=false){
+  const d=$('date').value||localDateISO();
+  const cap=$('cap').value;
+  const data=await get('/api/day?date='+encodeURIComponent(d)+(custom?'&cap='+cap:''),'Day report');
+  render(data,cap);
+}
+function render(d,cap){
+  const a=d.actual||{};
+  const rows=[{label:'Actual optimizer',...a},...(d.counterfactuals||[]),d.oracle||{},d.economic_oracle||{}].filter(r=>r&&r.label);
+  $('replay').innerHTML=table(rows,[
+    ['Policy',r=>esc(r.label||'')],['Export kWh',r=>fmt(r.export_kwh)],
+    ['Actual − policy',r=>r.optimizer_export_delta_kwh==null?'—':fmt(r.optimizer_export_delta_kwh)],
+    ['Import kWh',r=>fmt(r.import_kwh)],['Curtail kWh',r=>fmt(r.curtailed_kwh||0)],
+    ['Throughput kWh',r=>fmt(r.battery_throughput_kwh)],['Final SOC',r=>fmt(r.final_soc_pct,1)+'%'],
+    ['EFC',r=>fmt(r.equivalent_full_cycles,3)],['Cost €',r=>fmt(r.economic_cost_eur,2)]]);
+  const c=(d.counterfactuals||[]).find(x=>Number(x.cap_w)===Number(cap));
+  $('custom').innerHTML=c?`At <b>${cap} W</b>: export ${fmt(c.export_kwh)} kWh, import ${fmt(c.import_kwh)} kWh, curtailed ${fmt(c.curtailed_kwh)} kWh, final SOC ${fmt(c.final_soc_pct,1)}%, versus actual ${fmt(c.optimizer_export_delta_kwh)} kWh.`:'Move the slider to replay a cap.';
+  drawPower(d.timeline);drawSoc(d.timeline,CFG);drawForecast(d.forecast||{});
+  const f=d.forecast||{};
+  $('forecastmeta').innerHTML=`Probabilistic source <span class="mono">${esc(f.probabilistic_source||'waiting')}</span> ${esc(JSON.stringify(f.probabilistic_factors||{}))} · data coverage ${fmt(d.quality?.coverage_pct,1)}% of the day (${d.quality?.samples||0} samples, ${d.quality?.synthesized_intervals||0} reconstructed).`;
+  const g=d.battery_aging||{};
+  $('aging').innerHTML=kv([['Throughput',fmt(g.throughput_kwh)+' kWh'],['EFC',fmt(g.equivalent_full_cycles,3)],['Average SOC',fmt(g.average_soc_pct,1)+'%'],['Hours ≥95%',fmt(g.hours_soc_ge_95)+' h'],['Hours ≤20%',fmt(g.hours_soc_le_20)+' h'],['Max C-rate',fmt(g.max_c_rate,3)]]);
+  const cu=d.curtailment||{};
+  $('curtail').innerHTML=kv([['Estimated lost',`<b>${fmt(cu.estimated_kwh)} kWh</b>`],['Flagged intervals',cu.flagged_intervals||0],['Basis',esc(cu.status||'')]]);
+  const m=d.morning_learning||{};
+  $('morning').innerHTML=kv([['Status',esc(m.status||'')],['Samples',m.samples||0],['Median error',fmt(m.median_error_minutes,1)+' min'],['Applied bias',fmt(m.applied_bias_minutes,1)+' min']]);
+  const e=d.economics||{};
+  $('econ').innerHTML=kv([['Import',fmt(e.import_eur_kwh,3)+' €/kWh'],['Export',fmt(e.export_eur_kwh,3)+' €/kWh'],['Battery wear',fmt(e.battery_wear_eur_kwh,3)+' €/kWh'],['Actual cost',fmt(a.economic_cost_eur,2)+' €']]);
+  const mp=(d.mppt&&d.mppt.channels)||[];
+  $('mppt').innerHTML=table(mp,[['MPPT',r=>esc(r.mppt)],['Mapped array',r=>esc(r.array||'—')],['Observed kWh',r=>fmt(r.observed_kwh)],['Forecast kWh',r=>fmt(r.forecast_kwh)],['Ratio',r=>fmt(r.ratio,3)]]);
+  const all=(f.revisions||[]).slice().reverse();
+  const rv=all.slice(0,12);
+  $('revisions').innerHTML=table(rv,[['Fetched',r=>esc(String(r.fetched_at||'').replace('T',' ').slice(0,19))],['Expected kWh',r=>fmt(r.expected_kwh)],['Lead bucket',r=>esc(r.lead_bucket||'legacy')]])+
+    (all.length>rv.length?`<div class="small muted" style="padding:8px 10px">Showing the ${rv.length} most recent of ${all.length} revisions for this day.</div>`:'');
+}
+
+/* ---- writes & windows tab -------------------------------------------------
+   Gate state is a status, not a series: it uses the reserved status palette in
+   severity order, and every band is also named in the legend and interval table
+   so the meaning never rides on colour alone. */
+const GATE_STATES=['open','writing','blocked_cooldown','blocked_backoff','blocked_cloud','no_data'];
+const gateColor=st=>({open:'--good',writing:'--muted',blocked_cooldown:'--warning',
+  blocked_backoff:'--serious',blocked_cloud:'--critical',no_data:'--grid'}[st]||'--muted');
+const GATE_TEXT={open:'Open — free to write',writing:'Write in flight',
+  blocked_cooldown:'Blocked — write cooldown or budget',blocked_backoff:'Blocked — failed-order backoff',
+  blocked_cloud:'Blocked — DeyeCloud stale or refusing',no_data:'No controller data'};
+
+function drawGate(ctl){
+  const w=1000,h=150,svg=$('chart-gate');
+  const x=xScale(w),segs=(ctl.segments||[]);
+  const bandY=30,bandH=42;
+  let g='';
+  for(let hh=0;hh<=24;hh+=3){
+    g+=`<line x1="${x(hh*60).toFixed(1)}" x2="${x(hh*60).toFixed(1)}" y1="${bandY-6}" y2="${bandY+bandH+6}" stroke="${css('--grid')}" stroke-width="1"/>`;
+    g+=`<text x="${x(hh*60).toFixed(1)}" y="${h-6}" font-size="11" text-anchor="middle" fill="${css('--muted')}">${String(hh).padStart(2,'0')}</text>`;
+  }
+  segs.forEach(sg=>{
+    const a=minsOfDay(sg.start),b=minsOfDay(sg.end);
+    if(a===null||b===null)return;
+    const bb=(b<a?1440:b); // an interval closing at midnight reads as end-of-day
+    const x0=x(a),x1=Math.max(x(bb),x0+1);
+    g+=`<rect x="${x0.toFixed(1)}" y="${bandY}" width="${(x1-x0).toFixed(1)}" height="${bandH}" fill="${css(gateColor(sg.state))}" opacity="${sg.state==='no_data'?0.5:0.92}"><title>${esc(sg.label)} · ${hhmm(sg.start)}–${hhmm(sg.end)} (${fmt(sg.minutes,0)} min) · ${esc(sg.detail)}</title></rect>`;
+  });
+  g+=`<text x="${PAD.l}" y="${bandY-10}" font-size="11" fill="${css('--muted')}">write window</text>`;
+  (ctl.writes||[]).forEach(wr=>{
+    const m=minsOfDay(wr.time); if(m===null)return;
+    const ok=wr.status==='success';
+    const col=css(ok?'--good':'--critical');
+    const px=x(m);
+    g+=`<line x1="${px.toFixed(1)}" x2="${px.toFixed(1)}" y1="${bandY}" y2="${bandY+bandH+10}" stroke="${col}" stroke-width="2"/>`;
+    g+=`<text x="${px.toFixed(1)}" y="${bandY+bandH+26}" font-size="12" text-anchor="middle" fill="${col}">${ok?'\u2713':'\u2715'}</text>`;
+    g+=`<title>${esc(hhmm(wr.time)+' '+wr.previous_w+'→'+wr.requested_w+' W · '+wr.reason+' · '+wr.status+(wr.error_code?' (error '+wr.error_code+')':''))}</title>`;
+  });
+  svg.innerHTML=g;
+  const present=GATE_STATES.filter(st=>segs.some(sg=>sg.state===st));
+  $('legend-gate').innerHTML=present.map(st=>`<span><i class="gsw st-${st}"></i>${esc(GATE_TEXT[st])}</span>`).join('')+
+    `<span style="color:var(--good)">\u2713 write confirmed</span><span style="color:var(--critical)">\u2715 write rejected</span>`;
+}
+
+async function loadControl(){
+  const d=$('date').value||localDateISO();
+  const ctl=await get('/api/control?date='+encodeURIComponent(d),'Control log');
+  const cur=ctl.current;
+  $('gatenow').innerHTML=cur
+    ? `<div class="banner ${cur.state==='open'?'ok':(cur.state==='writing'?'ok':(cur.state==='blocked_cloud'?'crit':'warn'))}">
+        <span class="ic" aria-hidden="true">${cur.state==='open'?'\u25CF':(cur.state==='writing'?'\u25D0':'\u25A0')}</span>
+        <div><b>${esc(cur.label)}</b>Since ${hhmm(cur.since)} (${fmt(cur.minutes,0)} min) · <span class="mono">${esc(cur.detail)}</span>
+        ${ctl.next_window_not_before?`<br>Next window not before <b>${hhmm(ctl.next_window_not_before)}</b>.`:''}
+        ${(ctl.open_blocking_gates||[]).map(g=>`<br>${esc(g.gate)} until ${hhmm(g.until)}`).join('')}</div></div>`
+    : `<div class="banner ok"><span class="ic" aria-hidden="true">\u25CB</span><div><b>No live gate state for this date.</b>Showing the recorded history below.</div></div>`;
+  const sm=ctl.summary_minutes||{};
+  const blocked=(sm.blocked_cloud||0)+(sm.blocked_backoff||0)+(sm.blocked_cooldown||0);
+  $('gatetiles').innerHTML=
+    tile('Writes confirmed',String(ctl.successful_writes||0),`${ctl.submissions||0} submitted, ${ctl.failed_writes||0} rejected`)+
+    tile('Window open',fmt((sm.open||0)/60,1)+' h','controller free to write')+
+    tile('Window blocked',fmt(blocked/60,1)+' h','cloud, backoff or cooldown')+
+    tile('Cloud blocked',fmt((sm.blocked_cloud||0)/60,1)+' h','telemetry stale or refused')+
+    tile('No controller data',fmt((sm.no_data||0)/60,1)+' h','service not reporting');
+  drawGate(ctl);
+  $('writes').innerHTML=table(ctl.writes||[],[
+    ['Time',r=>hhmm(r.time)],
+    ['Change',r=>`${r.previous_w==null?'—':r.previous_w} → <b>${r.requested_w}</b> W`],
+    ['Delta',r=>r.delta_w==null?'—':(r.delta_w>0?'+':'')+r.delta_w+' W'],
+    ['Reason',r=>`<span class="mono">${esc(r.reason)}</span>`],
+    ['Status',r=>{const ok=r.status==='success';
+      return `<span style="color:${ok?'var(--good-ink)':(r.status==='failed'?'var(--critical)':'var(--ink-2)')}">${ok?'\u2713':(r.status==='failed'?'\u2715':'\u25CB')} ${esc(r.status)}</span>`}],
+    ['Deye error',r=>r.error_code?`<span class="mono">${esc(r.error_code)}</span>`:'—'],
+    ['Confirmed',r=>r.confirmed_at?hhmm(r.confirmed_at):'—'],
+    ['Order',r=>`<span class="mono small">${esc(r.order_id||'—')}</span>`]]);
+  $('gatesummary').innerHTML=table(
+    GATE_STATES.filter(st=>sm[st]!==undefined).map(st=>({st,min:sm[st]})),
+    [['State',r=>`<i class="gsw st-${r.st}"></i>${esc(GATE_TEXT[r.st])}`],
+     ['Minutes',r=>fmt(r.min,0)],['Hours',r=>fmt(r.min/60,2)],
+     ['Share of day',r=>fmt(r.min/14.4,1)+'%']]);
+  const blockedSegs=(ctl.segments||[]).filter(sg=>sg.state.startsWith('blocked')||sg.state==='no_data')
+    .sort((a,b)=>b.minutes-a.minutes).slice(0,15);
+  $('gateintervals').innerHTML=table(blockedSegs,[
+    ['From',r=>hhmm(r.start)],['To',r=>hhmm(r.end)],['Minutes',r=>fmt(r.minutes,0)],
+    ['State',r=>`<i class="gsw st-${r.state}"></i>${esc(GATE_TEXT[r.state])}`],
+    ['Recorded action',r=>`<span class="mono small">${esc(r.detail)}</span>`]]);
+}
+
+function selectTab(name){
+  const isCtl=name==='control';
+  $('tab-overview').setAttribute('aria-selected',String(!isCtl));
+  $('tab-control').setAttribute('aria-selected',String(isCtl));
+  $('panel-overview').hidden=isCtl;
+  $('panel-control').hidden=!isCtl;
+  try{localStorage.setItem('deye.tab',name)}catch(e){}
+  if(isCtl)loadControl().catch(()=>{});
+}
+$('tab-overview').onclick=()=>selectTab('overview');
+$('tab-control').onclick=()=>selectTab('control');
+
+let capTimer=null;
+$('cap').oninput=()=>{$('capv').textContent=$('cap').value+' W';clearTimeout(capTimer);capTimer=setTimeout(()=>loadDay(true).catch(()=>{}),200)};
+$('date').onchange=()=>{loadDay().catch(()=>{});if(!$('panel-control').hidden)loadControl().catch(()=>{})};
+$('refresh').onclick=()=>{loadLive().catch(()=>{});loadDay().catch(()=>{});loadHistory().catch(()=>{});if(!$('panel-control').hidden)loadControl().catch(()=>{})};
+
+(async function start(){
+  try{await loadConfig()}catch(e){$('date').value=new Date().toISOString().slice(0,10)}
+  loadLive().catch(()=>{});loadDay().catch(()=>{});loadHistory().catch(()=>{});
+  try{const t=localStorage.getItem('deye.tab');if(t==='control')selectTab('control')}catch(e){}
+  setInterval(()=>{loadLive().catch(()=>{});if(!$('panel-control').hidden)loadControl().catch(()=>{})},60000);
+  setInterval(()=>{loadDay().catch(()=>{});loadHistory().catch(()=>{})},300000);
+})();
+</script></body></html>

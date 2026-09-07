@@ -1,0 +1,26 @@
+[Unit]
+Description=Deye Solar Optimizer v3
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=deyeopt
+Group=deyeopt
+ExecStart=/usr/bin/python3 /opt/deye-solar-optimizer/controller.py --env /etc/deye-solar-optimizer/deye.env
+Restart=always
+RestartSec=30
+TimeoutStopSec=20
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ReadOnlyPaths=/opt/deye-solar-optimizer /etc/deye-solar-optimizer
+ReadWritePaths=/var/lib/deye-solar-optimizer
+UMask=0027
+
+[Install]
+WantedBy=multi-user.target

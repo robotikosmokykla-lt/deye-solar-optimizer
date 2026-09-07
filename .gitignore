@@ -1,0 +1,25 @@
+# Secrets / local configuration
+.env
+deye.env
+*.env.local
+
+# Runtime state and diagnostics
+*.db
+*.sqlite
+*.sqlite3
+*.log
+*.jsonl
+*.tar.gz
+exports/
+day-check-*/
+deye-check-*/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Editor/OS
+.vscode/
+.idea/
+.DS_Store

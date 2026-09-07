@@ -1,0 +1,25 @@
+[Unit]
+Description=Deye Solar Optimizer read-only analytics dashboard
+After=deye-solar-optimizer.service
+Wants=deye-solar-optimizer.service
+
+[Service]
+Type=simple
+User=deyeopt
+Group=deyeopt
+ExecStart=/usr/bin/python3 /opt/deye-solar-optimizer/dashboard_server.py --env /etc/deye-solar-optimizer/deye.env
+Restart=on-failure
+RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ReadOnlyPaths=/opt/deye-solar-optimizer /etc/deye-solar-optimizer /var/lib/deye-solar-optimizer
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
