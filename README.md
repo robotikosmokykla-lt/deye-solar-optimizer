@@ -51,9 +51,7 @@ finish setup.
 - No local network access to the inverter is needed. Everything goes through Deye
   Cloud, so the optimizer can run anywhere, not just on the same LAN.
 
-**Five required values**
-
-Startup fails with a named error if any is missing:
+**Four values you supply**
 
 | Key | Where to find it |
 |---|---|
@@ -61,11 +59,37 @@ Startup fails with a named error if any is missing:
 | `DEYE_APP_SECRET` | developer portal, issued with the App ID |
 | `DEYE_LOGIN` | your Deye Cloud account email |
 | `DEYE_PASSWORD` | your Deye Cloud account password — SHA-256 hashed by this client before it is sent, never transmitted in clear text |
-| `DEYE_INVERTER_SN` | the inverter's serial, on its label and in the app under the device. **The inverter, not the logger stick** — the two have different serials and orders addressed to the logger fail |
 
-Everything else has a working default. In particular `DEYE_STATION_ID` is **optional**:
-it is used only by `deyeopt-preflight` for one diagnostic read and never by control,
-so leaving it at `0` is fine.
+**One value the tool finds for you**
+
+`DEYE_INVERTER_SN` is also required, but you do not have to hunt for it on a label.
+With the four credentials in place:
+
+```bash
+sudo deyeopt-discover
+```
+
+It authenticates, lists the plants on the account and prints the line to paste:
+
+```text
+Station 62524672  "Home"  13.65 kWp  Europe/Amsterdam
+    INVERTER       2401234567   <-- use this
+
+Add to your .env:
+
+    DEYE_INVERTER_SN="2401234567"
+    DEYE_STATION_ID=62524672    # optional, diagnostics only
+```
+
+This matters because a plant usually has several serials and only one of them works.
+The logger stick is a `COLLECTOR`, and an order addressed to it fails; `--all` shows
+every device with its type if you want to see the difference. If the account holds
+more than one inverter, the tool lists them and asks you to choose rather than
+guessing. Microinverter-only plants are reported as unsupported: this optimizer
+drives hybrid inverters.
+
+Everything else has a working default. `DEYE_STATION_ID` is **optional** — used only
+by `deyeopt-preflight` for one diagnostic read, never by control, so `0` is fine.
 
 One value you must get right by hand: `GRID_EXPORT_HARD_LIMIT_W`, your contracted
 export limit in watts. Every setpoint is clamped to it. Nothing can discover it for
@@ -276,10 +300,19 @@ The dashboard integrates `DCPowerPV1..4` and compares observed MPPT energy again
 
 ```bash
 cp .env.example deye.env
+
+# 1. Fill in the four credentials, plus your export limit and PV arrays.
 nano deye.env
+
+# 2. Let the tool find the inverter serial and paste the line it prints.
+python3 discover.py --env ./deye.env
+nano deye.env
+
+# 3. Install. Fresh installs start in dry-run: nothing is written to the inverter.
 sudo ./install.sh --env-file ./deye.env
-sudo python3 /opt/deye-solar-optimizer/preflight.py
-sudo systemctl restart deye-solar-optimizer
+
+# 4. Verify the whole chain end to end before enabling control.
+sudo deyeopt-preflight
 sudo deyeopt-status
 ```
 
@@ -292,27 +325,6 @@ STRATEGY_ACTIVE="conservative"
 
 After observation/commissioning, explicitly set `CONTROL_DRY_RUN=false` only when you are satisfied that telemetry, export direction and hard limits are correct.
 
-## Upgrade from v2.x / v3.0
-
-```bash
-sudo ./upgrade.sh
-```
-
-Legacy appliance schedules are preserved. If the physical heater timer is changing during the upgrade, override only its planning time explicitly:
-
-```bash
-sudo ./upgrade.sh --water-heater-time 10:00
-```
-
-If `/etc/deye-solar-optimizer/deye.env` does not exist, v3 automatically converts:
-
-- `/etc/deye-solar-optimizer/config.toml`
-- `/etc/deye-solar-optimizer/credentials/app-id.txt`
-- `/etc/deye-solar-optimizer/credentials/app-secret.txt`
-- `/etc/deye-solar-optimizer/credentials/login.txt`
-- `/etc/deye-solar-optimizer/credentials/login-pass.txt`
-
-into a single mode-`0640` root/deyeopt `deye.env` file. Existing SQLite history and `CONTROL_DRY_RUN` are preserved. v3.1 also appends newly introduced `.env` keys with defaults without overwriting existing values.
 
 ## Configuration
 

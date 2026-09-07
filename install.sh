@@ -44,7 +44,7 @@ install -d -m 750 -o root -g deyeopt /etc/deye-solar-optimizer
 install -d -m 750 -o deyeopt -g deyeopt /var/lib/deye-solar-optimizer
 install -d -m 750 -o deyeopt -g deyeopt /var/lib/deye-solar-optimizer/exports
 
-for f in controller.py status.py preflight.py window_probe.py control_probe.py profile_manager.py day_planner.py strategy_manager.py day_export.py migrate_legacy_config.py analytics_cli.py dashboard_server.py; do
+for f in controller.py status.py preflight.py window_probe.py control_probe.py profile_manager.py day_planner.py strategy_manager.py day_export.py discover.py migrate_legacy_config.py analytics_cli.py dashboard_server.py; do
   install -m 755 "$SRC_DIR/$f" "/opt/deye-solar-optimizer/$f"
 done
 for f in deye_api.py solar_forecast.py energy_strategy.py strategy_presets.py state_db.py config_loader.py analytics_engine.py; do
@@ -66,6 +66,7 @@ install -m 644 "$SRC_DIR/systemd/deye-solar-optimizer.service" /etc/systemd/syst
 install -m 644 "$SRC_DIR/systemd/deye-solar-analytics.service" /etc/systemd/system/deye-solar-analytics.service
 ln -sf /opt/deye-solar-optimizer/status.py /usr/local/bin/deyeopt-status
 ln -sf /opt/deye-solar-optimizer/preflight.py /usr/local/bin/deyeopt-preflight
+ln -sf /opt/deye-solar-optimizer/discover.py /usr/local/bin/deyeopt-discover
 ln -sf /opt/deye-solar-optimizer/control_probe.py /usr/local/bin/deyeopt-control-probe
 ln -sf /opt/deye-solar-optimizer/window_probe.py /usr/local/bin/deyeopt-window-probe
 ln -sf /opt/deye-solar-optimizer/profile_manager.py /usr/local/bin/deyeopt-profile

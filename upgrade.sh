@@ -106,7 +106,7 @@ cp -a "$ENV_FILE" "$ETC/backups/$STAMP/deye.env" 2>/dev/null || true
 cp -a "$LEGACY_CFG" "$ETC/backups/$STAMP/config.toml" 2>/dev/null || true
 
 install -d -m 755 -o root -g root "$DEST"
-for f in controller.py status.py preflight.py window_probe.py control_probe.py profile_manager.py day_planner.py strategy_manager.py day_export.py migrate_legacy_config.py analytics_cli.py dashboard_server.py; do
+for f in controller.py status.py preflight.py window_probe.py control_probe.py profile_manager.py day_planner.py strategy_manager.py day_export.py discover.py migrate_legacy_config.py analytics_cli.py dashboard_server.py; do
   install -m 755 "$SRC_DIR/$f" "$DEST/$f"
 done
 for f in deye_api.py solar_forecast.py energy_strategy.py strategy_presets.py state_db.py config_loader.py analytics_engine.py; do
@@ -119,6 +119,7 @@ install -m 644 "$SRC_DIR/systemd/deye-solar-optimizer.service" /etc/systemd/syst
 install -m 644 "$SRC_DIR/systemd/deye-solar-analytics.service" /etc/systemd/system/deye-solar-analytics.service
 ln -sf "$DEST/status.py" /usr/local/bin/deyeopt-status
 ln -sf "$DEST/preflight.py" /usr/local/bin/deyeopt-preflight
+ln -sf "$DEST/discover.py" /usr/local/bin/deyeopt-discover
 ln -sf "$DEST/control_probe.py" /usr/local/bin/deyeopt-control-probe
 ln -sf "$DEST/window_probe.py" /usr/local/bin/deyeopt-window-probe
 ln -sf "$DEST/profile_manager.py" /usr/local/bin/deyeopt-profile

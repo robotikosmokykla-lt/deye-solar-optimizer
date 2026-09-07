@@ -152,6 +152,18 @@ class DeyeClient:
             )
         return data
 
+    def list_stations_with_devices(self, page: int = 1, size: int = 50) -> Dict[str, Any]:
+        """Plants owned by this account, each with its device list.
+
+        Read-only. Used by `deyeopt-discover` to find the inverter serial, so the
+        serial does not have to be transcribed from a label by hand.
+        """
+        data = self._request(
+            f"{self.base_url}/station/listWithDevice",
+            {"page": int(page), "size": int(size)},
+        )
+        return self._require_success(data, "station/listWithDevice")
+
     def get_station_latest(self, station_id: int) -> Dict[str, Any]:
         data = self._request(f"{self.base_url}/station/latest", {"stationId": int(station_id)})
         return self._require_success(data, "station/latest")
