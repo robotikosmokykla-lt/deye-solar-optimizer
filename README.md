@@ -20,6 +20,70 @@ against counterfactual policies and a perfect-hindsight oracle.
 | [CHANGELOG.md](CHANGELOG.md) | release history |
 | [README_LT.md](README_LT.md) | Lithuanian summary |
 
+## The dashboard
+
+A separate read-only service scores what the optimizer did against policies it did
+not run. All screenshots below come from generated demo data — see
+[Try it without an inverter](#try-it-without-an-inverter).
+
+### Control state
+
+Every number the controller acted on, including the ones that used to be invisible:
+the confirmed export cap against the recommendation, the remaining write budget, and
+the full decision chain from raw forecast to allocated setpoint.
+
+The banner fires on the situation this project exists to catch — battery at its
+ceiling, no longer absorbing, PV still producing, and the export cap left below the
+limit. Surplus in that state is not stored, it is thrown away.
+
+![Control state, with the curtailment banner and the decision chain](docs/screenshots/01-control-state.png)
+
+### Today in power
+
+PV, load, grid export and the *confirmed* export cap on one shared axis, over a
+battery SOC panel marked with the curtailment threshold. Here the cap was throttled
+to 400 W mid-morning; the battery fills by early afternoon and PV is visibly clipped
+because there is nowhere left for it to go.
+
+![Intraday power and battery state of charge](docs/screenshots/02-power-and-soc.png)
+
+### Was it actually any good?
+
+The day is replayed against static export caps, a perfect-foresight oracle and an
+economic oracle, from the same measured PV and load. This is the honest scoreboard:
+it will happily show that a dumb fixed cap would have beaten the optimizer.
+
+![Counterfactual replay against static caps and a perfect-foresight oracle](docs/screenshots/03-counterfactuals.png)
+
+### Writes and windows
+
+Whether a write landed, and if not, what stood in the way. The band is reconstructed
+from the action recorded on every control tick, so it is the real gate history rather
+than a guess. Confirmed and rejected writes are marked on it, and the table surfaces
+the device error code behind a rejection.
+
+![Write attempts and the reconstructed write-window timeline](docs/screenshots/04-writes-and-windows.png)
+
+### Dark mode
+
+![The same control state in dark mode](docs/screenshots/05-dark-mode.png)
+
+## Try it without an inverter
+
+The dashboard runs against a generated database, so you can see all of the above
+without any hardware or credentials:
+
+```bash
+python3 tools/make_demo_data.py --out /tmp/deye-demo/state.db
+python3 dashboard_server.py --env tools/demo.env --port 8850
+# open http://127.0.0.1:8850/
+```
+
+`tools/make_demo_data.py` invents a 10 kWp site behind a 1 kW export limit and
+reproduces the situations the optimizer is built for: a clear day whose surplus a
+1 kW cap cannot carry, a curtailment episode, a cloud stall, and a device-rejected
+order. It contains no real measurements.
+
 > **Status:** this drives real hardware. It is deliberately conservative: it refuses
 > to write on stale telemetry, budgets flash writes, and clamps every setting to a
 > configured export limit. Read [ARCHITECTURE.md](ARCHITECTURE.md) before changing
