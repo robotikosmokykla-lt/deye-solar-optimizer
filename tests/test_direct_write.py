@@ -44,7 +44,7 @@ class FakeClient:
 class DirectWriteTests(unittest.TestCase):
     def make_controller(self, td, mode="accepted", *, legacy_probe="dynamic_read"):
         cfg = Config({
-            "site": {"timezone": "Europe/Vilnius"},
+            "site": {"timezone": "Europe/Amsterdam"},
             "deye": {"inverter_sn": "TEST_INVERTER_SN"},
             "grid": {"export_hard_limit_w": 1000},
             "battery": {"soc_floor_pct": 15.0, "effective_kwh": 15.0},
@@ -68,7 +68,7 @@ class DirectWriteTests(unittest.TestCase):
         })
         ctl = Controller.__new__(Controller)
         ctl.cfg = cfg
-        ctl.tz = ZoneInfo("Europe/Vilnius")
+        ctl.tz = ZoneInfo("Europe/Amsterdam")
         ctl.db = StateDB(str(Path(td) / "state.db"))
         ctl.log = NullLog()
         ctl.client = FakeClient(mode)

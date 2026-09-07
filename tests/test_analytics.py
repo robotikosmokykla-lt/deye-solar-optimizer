@@ -100,11 +100,11 @@ if __name__=="__main__": unittest.main()
 class ControlLogTests(unittest.TestCase):
     """v3.1.1: reconstruct write-window availability from the per-tick decision log."""
 
-    tz = ZoneInfo("Europe/Vilnius")
+    tz = ZoneInfo("Europe/Amsterdam")
 
     def raw(self, path):
         r = AnalyticsTests.raw(self)
-        r["site"] = {"timezone": "Europe/Vilnius"}
+        r["site"] = {"timezone": "Europe/Amsterdam"}
         r["logging"] = {"state_db": path}
         r["control"] = {"loop_seconds": 60, "min_write_interval_minutes": 120}
         return r

@@ -18,7 +18,7 @@ from controller import (
 class MathTests(unittest.TestCase):
     def cfg(self):
         return Config({
-            "site": {"timezone": "Europe/Vilnius"},
+            "site": {"timezone": "Europe/Amsterdam"},
             "battery": {"soc_floor_pct": 15.0, "effective_kwh": 15.0},
             "load_model": {"base_house_load_w": 115, "system_overhead_w": 120},
             "grid": {"export_hard_limit_w": 1000},
@@ -38,13 +38,13 @@ class MathTests(unittest.TestCase):
         self.assertEqual(quantize_w(-200, 100, 1000), 0)
 
     def test_sep1_like_case(self):
-        tz = ZoneInfo("Europe/Vilnius")
+        tz = ZoneInfo("Europe/Amsterdam")
         now = dt.datetime(2026, 9, 1, 22, 5, tzinfo=tz)
         target = dt.datetime(2026, 9, 2, 6, 47, tzinfo=tz)
         self.assertEqual(calculate_night_export_w(self.cfg(), 56, now, target), 500)
 
     def test_control_wakeup_uses_sustained_useful_pv(self):
-        tz = ZoneInfo("Europe/Vilnius")
+        tz = ZoneInfo("Europe/Amsterdam")
         sunrise = dt.datetime(2026, 9, 2, 6, 32, tzinfo=tz)
         points = [
             SimpleNamespace(time=dt.datetime(2026, 9, 2, 6, 45, tzinfo=tz), predicted_w=200),
@@ -61,7 +61,7 @@ class MathTests(unittest.TestCase):
         self.assertEqual(control_pv_wakeup(self.cfg(), fc), dt.datetime(2026, 9, 2, 7, 5, tzinfo=tz))
 
     def test_stale_night_soc_estimate_matches_observed_case(self):
-        tz = ZoneInfo("Europe/Vilnius")
+        tz = ZoneInfo("Europe/Amsterdam")
         collection = dt.datetime(2026, 9, 2, 0, 21, 3, tzinfo=tz)
         now = dt.datetime(2026, 9, 2, 1, 11, 17, tzinfo=tz)
         snap = DeviceSnapshot(
@@ -76,7 +76,7 @@ class MathTests(unittest.TestCase):
         self.assertAlmostEqual(soc, 32.25, places=1)
 
     def test_soc_extrapolation_can_be_disabled_after_control_change(self):
-        tz = ZoneInfo("Europe/Vilnius")
+        tz = ZoneInfo("Europe/Amsterdam")
         collection = dt.datetime(2026, 9, 2, 0, 21, 3, tzinfo=tz)
         now = dt.datetime(2026, 9, 2, 1, 11, 17, tzinfo=tz)
         snap = DeviceSnapshot(
@@ -102,7 +102,7 @@ class MathTests(unittest.TestCase):
         self.assertEqual(why, "accepted")
 
     def test_linear_soc(self):
-        tz = ZoneInfo("Europe/Vilnius")
+        tz = ZoneInfo("Europe/Amsterdam")
         s = dt.datetime(2026, 9, 1, 22, 0, tzinfo=tz)
         t = dt.datetime(2026, 9, 2, 6, 0, tzinfo=tz)
         mid = dt.datetime(2026, 9, 2, 2, 0, tzinfo=tz)

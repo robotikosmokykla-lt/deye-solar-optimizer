@@ -44,7 +44,7 @@ class ProfileTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             cfg = {
                 "deye": {"inverter_sn": "2512"},
-                "site": {"timezone": "Europe/Vilnius"},
+                "site": {"timezone": "Europe/Amsterdam"},
                 "grid": {"export_hard_limit_w": 1000},
                 "logging": {"state_db": str(Path(td) / "state.db")},
             }

@@ -19,14 +19,14 @@ class V220ControllerTests(unittest.TestCase):
     def make_ctl(self, td):
         ctl = Controller.__new__(Controller)
         ctl.cfg = Config({
-            "site": {"timezone": "Europe/Vilnius"},
+            "site": {"timezone": "Europe/Amsterdam"},
             "grid": {"export_hard_limit_w": 1000, "day_export_w": 1000},
             "battery": {"effective_kwh": 15.0, "soc_floor_pct": 15.0, "day_target_soc_pct": 96.0},
             "control": {"max_writes_per_day": 4, "min_write_interval_minutes": 120, "min_write_delta_w": 200},
             "day_strategy": {"max_budget_writes_per_day": 2},
             "telemetry_health": {"stale_warning_minutes": 10, "cloud_offline_minutes": 20},
         })
-        ctl.tz = ZoneInfo("Europe/Vilnius")
+        ctl.tz = ZoneInfo("Europe/Amsterdam")
         ctl.db = StateDB(str(Path(td) / "state.db"))
         ctl.log = NullLog()
         ctl.current_setting_w = 1000

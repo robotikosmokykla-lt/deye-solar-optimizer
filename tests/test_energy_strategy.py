@@ -48,7 +48,7 @@ class EnergyStrategyTests(unittest.TestCase):
         self.assertEqual(quantize_export_floor(1100, 100, 1000), 1000)
 
     def test_night_floor_deadline(self):
-        tz = ZoneInfo("Europe/Vilnius")
+        tz = ZoneInfo("Europe/Amsterdam")
         day = SimpleNamespace(
             sunrise=dt.datetime(2026, 9, 4, 6, 36, tzinfo=tz),
             pv_wakeup=dt.datetime(2026, 9, 4, 7, 0, tzinfo=tz),
@@ -63,7 +63,7 @@ class EnergyStrategyTests(unittest.TestCase):
         self.assertEqual(night_floor_deadline(self.raw(), day), dt.datetime(2026, 9, 4, 7, 20, tzinfo=tz))
 
     def test_heater_budget_before_and_after_schedule(self):
-        tz = ZoneInfo("Europe/Vilnius")
+        tz = ZoneInfo("Europe/Amsterdam")
         raw = self.raw()
         before = dt.datetime(2026, 9, 4, 9, 0, tzinfo=tz)
         midway = dt.datetime(2026, 9, 4, 10, 0, tzinfo=tz)
@@ -73,7 +73,7 @@ class EnergyStrategyTests(unittest.TestCase):
         self.assertEqual(heater_remaining_kwh(raw, after)[0], 0.0)
 
     def test_cooker_is_budgeted_as_scheduled_load(self):
-        tz = ZoneInfo("Europe/Vilnius")
+        tz = ZoneInfo("Europe/Amsterdam")
         raw = self.raw()
         before = dt.datetime(2026, 9, 4, 17, 30, tzinfo=tz)
         during = dt.datetime(2026, 9, 4, 18, 15, tzinfo=tz)
@@ -83,7 +83,7 @@ class EnergyStrategyTests(unittest.TestCase):
         self.assertEqual(cooker_remaining_kwh(raw, after)[0], 0.0)
 
     def test_recent_full_means_normal_96_target(self):
-        tz = ZoneInfo("Europe/Vilnius")
+        tz = ZoneInfo("Europe/Amsterdam")
         with tempfile.TemporaryDirectory() as td:
             db = StateDB(str(Path(td) / "state.db"))
             now = dt.datetime(2026, 9, 4, 12, 0, tzinfo=tz)
@@ -94,7 +94,7 @@ class EnergyStrategyTests(unittest.TestCase):
             db.close()
 
     def test_old_full_means_100_maintenance_target(self):
-        tz = ZoneInfo("Europe/Vilnius")
+        tz = ZoneInfo("Europe/Amsterdam")
         with tempfile.TemporaryDirectory() as td:
             db = StateDB(str(Path(td) / "state.db"))
             now = dt.datetime(2026, 10, 10, 12, 0, tzinfo=tz)
@@ -105,7 +105,7 @@ class EnergyStrategyTests(unittest.TestCase):
             db.close()
 
     def test_maintenance_is_deferred_on_poor_forecast(self):
-        tz = ZoneInfo("Europe/Vilnius")
+        tz = ZoneInfo("Europe/Amsterdam")
         now = dt.datetime(2026, 10, 10, 10, 0, tzinfo=tz)
         sunset = dt.datetime(2026, 10, 10, 18, 0, tzinfo=tz)
         points = [
@@ -123,7 +123,7 @@ class EnergyStrategyTests(unittest.TestCase):
             db.close()
 
     def test_abundant_pv_supports_full_export(self):
-        tz = ZoneInfo("Europe/Vilnius")
+        tz = ZoneInfo("Europe/Amsterdam")
         now = dt.datetime(2026, 9, 4, 10, 0, tzinfo=tz)
         sunset = dt.datetime(2026, 9, 4, 20, 0, tzinfo=tz)
         points = [
@@ -160,7 +160,7 @@ class EnergyStrategyTests(unittest.TestCase):
         )
 
     def test_conservative_poor_day_stops_night_grid_export(self):
-        tz = ZoneInfo("Europe/Vilnius")
+        tz = ZoneInfo("Europe/Amsterdam")
         now = dt.datetime(2026, 9, 4, 0, 40, tzinfo=tz)
         raw = self.raw()
         raw["strategy"] = {"active": "conservative"}
@@ -176,7 +176,7 @@ class EnergyStrategyTests(unittest.TestCase):
             db.close()
 
     def test_risky_poor_day_still_targets_15pct_floor(self):
-        tz = ZoneInfo("Europe/Vilnius")
+        tz = ZoneInfo("Europe/Amsterdam")
         now = dt.datetime(2026, 9, 4, 0, 40, tzinfo=tz)
         raw = self.raw()
         raw["strategy"] = {"active": "risky"}
@@ -189,7 +189,7 @@ class EnergyStrategyTests(unittest.TestCase):
             db.close()
 
     def test_max_export_tag_ignores_poor_day_budget(self):
-        tz = ZoneInfo("Europe/Vilnius")
+        tz = ZoneInfo("Europe/Amsterdam")
         now = dt.datetime(2026, 9, 4, 9, 0, tzinfo=tz)
         raw = self.raw()
         raw["strategy"] = {"active": "max-export"}
@@ -201,7 +201,7 @@ class EnergyStrategyTests(unittest.TestCase):
             db.close()
 
     def test_save_tag_closes_export_cap(self):
-        tz = ZoneInfo("Europe/Vilnius")
+        tz = ZoneInfo("Europe/Amsterdam")
         now = dt.datetime(2026, 9, 4, 9, 0, tzinfo=tz)
         raw = self.raw()
         raw["strategy"] = {"active": "save"}
@@ -213,7 +213,7 @@ class EnergyStrategyTests(unittest.TestCase):
             db.close()
 
     def test_predawn_plan_starts_at_morning_handoff_not_midnight(self):
-        tz = ZoneInfo("Europe/Vilnius")
+        tz = ZoneInfo("Europe/Amsterdam")
         now = dt.datetime(2026, 9, 4, 0, 40, tzinfo=tz)
         raw = self.raw()
         raw["strategy"] = {"active": "conservative"}
@@ -232,7 +232,7 @@ class EnergyStrategyTests(unittest.TestCase):
         raw = self.raw()
         raw["strategy"] = {"active": "economic"}
         raw["economic"] = {"import_eur_kwh": 0.10, "export_eur_kwh": 0.30, "battery_wear_eur_kwh": 0.01}
-        tz = ZoneInfo("Europe/Vilnius")
+        tz = ZoneInfo("Europe/Amsterdam")
         now = dt.datetime(2026, 9, 4, 0, 0, tzinfo=tz)
         day = SimpleNamespace(
             date=now.date(), sunrise=dt.datetime(2026,9,4,6,30,tzinfo=tz),
@@ -252,7 +252,7 @@ class EnergyStrategyTests(unittest.TestCase):
     def test_economic_strategy_preserves_battery_when_export_is_cheap(self):
         raw = self.raw()
         raw["strategy"] = {"active": "economic"}
-        tz = ZoneInfo("Europe/Vilnius")
+        tz = ZoneInfo("Europe/Amsterdam")
         now = dt.datetime(2026, 9, 4, 0, 0, tzinfo=tz)
         day = SimpleNamespace(
             date=now.date(), sunrise=dt.datetime(2026,9,4,6,30,tzinfo=tz),
@@ -274,7 +274,7 @@ if __name__ == "__main__":
 class StoredSurplusExportTests(unittest.TestCase):
     """v3.1.1: the daytime plan must be able to sell stored surplus, not only PV surplus."""
 
-    tz = ZoneInfo("Europe/Vilnius")
+    tz = ZoneInfo("Europe/Amsterdam")
 
     def raw(self):
         return EnergyStrategyTests.raw(self)
@@ -394,7 +394,7 @@ class StoredSurplusExportTests(unittest.TestCase):
 class IntradayBiasTests(unittest.TestCase):
     """v3.1.2: correct the remaining forecast by how today is actually tracking."""
 
-    tz = ZoneInfo("Europe/Vilnius")
+    tz = ZoneInfo("Europe/Amsterdam")
 
     def raw(self, **over):
         r = EnergyStrategyTests.raw(self)
@@ -505,7 +505,7 @@ class IntradayBiasTests(unittest.TestCase):
 class LoadScaledReserveTests(unittest.TestCase):
     """v3.1.3: the reserve is hours of house cover, not a fixed slab of kWh."""
 
-    tz = ZoneInfo("Europe/Vilnius")
+    tz = ZoneInfo("Europe/Amsterdam")
 
     def raw(self, house_w, **over):
         r = EnergyStrategyTests.raw(self)
