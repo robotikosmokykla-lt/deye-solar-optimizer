@@ -1,5 +1,20 @@
 # Changelog
 
+## v3.1.5 - 2026-09-07
+
+### Honest oracle benchmark
+
+- The perfect-foresight oracle was held to the fixed `BATTERY_DAY_TARGET_SOC_PCT`
+  while the live plan aims at the night's real need. That flattered the optimizer:
+  the benchmark was forbidden from spending battery the optimizer was free to spend,
+  so days looked closer to optimal than they were.
+- The oracle now uses the same end-of-day requirement the plan computes, rebuilt
+  from the stored forecasts for that date and the next, and reports which target it
+  used and why.
+- Known limitation: "actual" is derived from the inverter's cumulative meters while
+  the oracle replays reconstructed intervals, so on days with poor telemetry
+  coverage the two disagree and the oracle is not a strict upper bound.
+
 ## v3.1.4 - 2026-09-07
 
 ### The battery refills from energy the cap cannot carry

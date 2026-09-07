@@ -14,6 +14,7 @@ import sqlite3
 import statistics
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Dict, Iterable, Optional
 from zoneinfo import ZoneInfo
 
@@ -683,6 +684,65 @@ def control_log(raw: Dict[str, Any], db_path: str, date: dt.date) -> Dict[str, A
     }
 
 
+def _forecast_day_object(raw: Dict[str, Any], db_path: str, date: dt.date):
+    """Rebuild a forecast day from stored rows, for reuse of the strategy helpers."""
+    rows = _forecast_rows(db_path, date)
+    if not rows:
+        return None
+    r = rows[-1]
+    try:
+        pts = [SimpleNamespace(time=dt.datetime.fromisoformat(p["time"]),
+                               predicted_w=float(p["predicted_w"]))
+               for p in json.loads(r["points_json"] or "[]")]
+        return SimpleNamespace(
+            date=date,
+            sunrise=dt.datetime.fromisoformat(r["sunrise"]),
+            sunset=dt.datetime.fromisoformat(r["sunset"]),
+            pv_wakeup=dt.datetime.fromisoformat(r["pv_wakeup"]),
+            useful_pv_start=dt.datetime.fromisoformat(r["useful_pv_start"]),
+            points=pts,
+        )
+    except Exception:
+        return None
+
+
+def oracle_end_of_day_target(raw: Dict[str, Any], db_path: str, date: dt.date) -> tuple[float, str]:
+    """The end-of-day SOC the optimizer was actually aiming at on that date.
+
+    Holding the oracle to a fixed day target while the live plan aims at the night's
+    real need flatters the optimizer: the benchmark is forbidden from spending
+    battery the optimizer was free to spend, so a day looks closer to optimal than
+    it was. This mirrors the strategy's own requirement instead.
+    """
+    default = float(raw["battery"].get("day_target_soc_pct", 96.0))
+    day = _forecast_day_object(raw, db_path, date)
+    if day is None:
+        return default, "no_forecast_stored"
+    tomorrow = _forecast_day_object(raw, db_path, date + dt.timedelta(days=1))
+    try:
+        from energy_strategy import (night_energy_need_kwh, strategy_reserve_kwh,
+                                     tomorrow_refill_possible)
+        from state_db import StateDB
+        from strategy_presets import active_strategy
+        policy = active_strategy(raw)
+        db = StateDB(db_path, readonly=True)
+        try:
+            now = day.sunset
+            need, _hours = night_energy_need_kwh(raw, db, day, tomorrow, now)
+            reserve, _src = strategy_reserve_kwh(raw, db, now, policy)
+            capacity = float(raw["battery"]["effective_kwh"])
+            floor = float(raw["battery"]["soc_floor_pct"])
+            required = floor + (need + reserve) / capacity * 100.0 if capacity > 0 else default
+            required = max(floor, min(100.0, required))
+            if tomorrow_refill_possible(raw, db, tomorrow, now, required, default):
+                return required, "night_need_plus_reserve"
+            return max(required, default), "day_target_held_forecast_cannot_refill"
+        finally:
+            db.close()
+    except Exception:
+        return default, "fallback_day_target"
+
+
 def day_report(raw: Dict[str, Any], date: dt.date, custom_cap_w: Optional[int] = None) -> Dict[str, Any]:
     db_path=raw["logging"]["state_db"]
     intervals,quality=day_intervals(db_path,date)
@@ -691,8 +751,13 @@ def day_report(raw: Dict[str, Any], date: dt.date, custom_cap_w: Optional[int] =
     if custom_cap_w is not None and int(custom_cap_w) not in caps: caps.append(int(custom_cap_w))
     caps=sorted(set(max(0,min(int(raw["grid"]["export_hard_limit_w"]),int(x))) for x in caps))
     sims=[simulate_static(raw,intervals,c).as_dict() for c in caps] if intervals else []
-    oracle=oracle_replay(raw,intervals, objective="energy").as_dict() if intervals else {}
-    economic_oracle=oracle_replay(raw,intervals, objective="economic").as_dict() if intervals else {}
+    oracle_target,oracle_target_reason=oracle_end_of_day_target(raw,db_path,date)
+    oracle=oracle_replay(raw,intervals,oracle_target, objective="energy").as_dict() if intervals else {}
+    economic_oracle=oracle_replay(raw,intervals,oracle_target, objective="economic").as_dict() if intervals else {}
+    for o in (oracle,economic_oracle):
+        if o:
+            o["end_of_day_target_soc_pct"]=round(oracle_target,2)
+            o["end_of_day_target_reason"]=oracle_target_reason
     for s in sims:
         if actual:
             s["optimizer_export_delta_kwh"] = round(actual.get("export_kwh",0.0)-s["export_kwh"],3)
@@ -709,6 +774,7 @@ def day_report(raw: Dict[str, Any], date: dt.date, custom_cap_w: Optional[int] =
             "Counterfactuals replay observed/energy-counter-reconstructed PV and load; estimated gains are lower-confidence across long telemetry gaps.",
             "Curtailment is a rough forecast-model estimate, not a revenue-grade irradiance measurement.",
             "Oracle has perfect hindsight and is a benchmark, not a live control policy.",
+            "The oracle is held to the same end-of-day SOC requirement as the live plan, not a fixed day target.",
         ],
     }
 

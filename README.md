@@ -72,13 +72,13 @@ sudo deyeopt-discover
 It authenticates, lists the plants on the account and prints the line to paste:
 
 ```text
-Station 62524672  "Home"  13.65 kWp  Europe/Amsterdam
+Station 10480512  "Home"  13.65 kWp  Europe/Amsterdam
     INVERTER       2401234567   <-- use this
 
 Add to your .env:
 
     DEYE_INVERTER_SN="2401234567"
-    DEYE_STATION_ID=62524672    # optional, diagnostics only
+    DEYE_STATION_ID=10480512    # optional, diagnostics only
 ```
 
 This matters because a plant usually has several serials and only one of them works.
@@ -246,6 +246,14 @@ sudo deyeopt-analytics --days 30
 ```
 
 ### What the counterfactual means
+
+The oracle is held to the **same end-of-day SOC requirement the live plan computes**,
+not a fixed day target, so it measures against the goal the optimizer was actually
+pursuing. It reports which target it used. One caveat: "actual" comes from the
+inverter's cumulative meters while the oracle replays reconstructed intervals, so on
+days with poor telemetry coverage the two disagree and the oracle is not a strict
+upper bound.
+
 
 The replay uses measured/cumulative-meter-reconstructed PV and house load as the available energy stream, then re-simulates battery SOC under alternative export caps. Therefore changing an export cap changes future SOC, curtailment, imports and battery throughput. It is not the naive `min(PV, export_limit)` calculation.
 
