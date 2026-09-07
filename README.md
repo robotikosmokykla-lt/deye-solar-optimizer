@@ -20,6 +20,61 @@ against counterfactual policies and a perfect-hindsight oracle.
 | [CHANGELOG.md](CHANGELOG.md) | release history |
 | [README_LT.md](README_LT.md) | Lithuanian summary |
 
+## What you need
+
+**Hardware**
+
+- A Deye hybrid inverter with a battery, reporting to Deye Cloud through its logger
+  (the Wi-Fi/LAN stick). If the phone app shows live data, the API will too.
+- A grid connection with an **export limit**. Without one, most of this project is
+  pointless: there is nothing to ration.
+
+**Accounts** — two, and you need both
+
+| | Where | What it is |
+|---|---|---|
+| Deye Cloud account | the phone app / [deyecloud.com](https://deyecloud.com) | the account that owns the plant — the one you already log in with |
+| Developer application | [developer.deyecloud.com](https://developer.deyecloud.com) | register, then create an application; the portal issues an **App ID** and **App Secret** |
+
+The two are not interchangeable. Authentication is a single call that sends the app
+pair *and* the account pair together, so a developer key alone cannot read your
+inverter, and your app login alone cannot reach the API.
+
+Approval of a developer application is not instant — allow for a wait before you can
+finish setup.
+
+**A machine to run it on**
+
+- Any always-on Linux box with Python 3.9+ and outbound HTTPS. A Raspberry Pi is
+  ample: the loop is one API call a minute and the database grows by a few MB a month.
+- systemd, for the two services the installer creates.
+- No local network access to the inverter is needed. Everything goes through Deye
+  Cloud, so the optimizer can run anywhere, not just on the same LAN.
+
+**Five required values**
+
+Startup fails with a named error if any is missing:
+
+| Key | Where to find it |
+|---|---|
+| `DEYE_APP_ID` | developer portal, on your application |
+| `DEYE_APP_SECRET` | developer portal, issued with the App ID |
+| `DEYE_LOGIN` | your Deye Cloud account email |
+| `DEYE_PASSWORD` | your Deye Cloud account password — SHA-256 hashed by this client before it is sent, never transmitted in clear text |
+| `DEYE_INVERTER_SN` | the inverter's serial, on its label and in the app under the device. **The inverter, not the logger stick** — the two have different serials and orders addressed to the logger fail |
+
+Everything else has a working default. In particular `DEYE_STATION_ID` is **optional**:
+it is used only by `deyeopt-preflight` for one diagnostic read and never by control,
+so leaving it at `0` is fine.
+
+One value you must get right by hand: `GRID_EXPORT_HARD_LIMIT_W`, your contracted
+export limit in watts. Every setpoint is clamped to it. Nothing can discover it for
+you, and setting it too high is a breach of your grid agreement.
+
+Then check `DEYE_BASE_URL` matches the region your developer account was issued for
+(`eu1` for Europe). A wrong region authenticates successfully and then reports your
+inverter as unknown, which is a confusing way to fail.
+
 ## The dashboard
 
 A separate read-only service scores what the optimizer did against policies it did
@@ -265,14 +320,48 @@ The complete set of supported keys is documented in `.env.example`. Important gr
 
 ### Deye credentials
 
+Five required values, one optional. See [What you need](#what-you-need) for where
+each comes from.
+
 ```env
+# Required - the developer application (developer.deyecloud.com)
 DEYE_APP_ID="..."
 DEYE_APP_SECRET="..."
-DEYE_LOGIN="..."
+
+# Required - your ordinary Deye Cloud account, as used by the phone app
+DEYE_LOGIN="you@example.com"
 DEYE_PASSWORD="..."
-DEYE_STATION_ID=...
+
+# Required - the INVERTER serial, not the logger stick's
 DEYE_INVERTER_SN="..."
+
+# Regional endpoint; must match the region your developer account was issued for
+DEYE_BASE_URL="https://eu1-developer.deyecloud.com/v1.0"
+
+# Optional - diagnostic only, never used for control. 0 disables it.
+DEYE_STATION_ID=0
 ```
+
+Both credential pairs are needed together. Authentication is one
+`POST /account/token?appId=...` carrying the app secret, your account email and a
+SHA-256 hash of your password; the plaintext password never leaves the machine. A
+developer key on its own cannot see your plant, and your account on its own cannot
+reach the API.
+
+Verify the whole chain before enabling control:
+
+```bash
+sudo deyeopt-preflight
+```
+
+It authenticates, reads `device/latest`, and prints what it found. Common failures:
+
+| Symptom | Cause |
+|---|---|
+| `Authentication failed: code=...` | wrong app secret, or account and app registered in different regions |
+| authenticates, then the device is unknown | `DEYE_BASE_URL` region mismatch, or the serial belongs to the logger rather than the inverter |
+| `2104006 device offline` | the logger is not reaching Deye Cloud — check the stick and its Wi-Fi before suspecting this project |
+| telemetry timestamps stall for tens of minutes | normal Deye Cloud behaviour; the optimizer refuses to write while blind rather than acting on stale data |
 
 ### PV arrays
 
