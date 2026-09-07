@@ -240,6 +240,9 @@ def load_config(path: str = DEFAULT_ENV) -> Dict[str, Any]:
             "load_scaled_reserve_enabled": _bool(v, "DAY_LOAD_SCALED_RESERVE_ENABLED", True),
             "reserve_min_kwh": _float(v, "DAY_RESERVE_MIN_KWH", 0.5),
             "reserve_max_kwh": _float(v, "DAY_RESERVE_MAX_KWH", 6.0),
+            "above_cap_refill_enabled": _bool(v, "DAY_ABOVE_CAP_REFILL_ENABLED", True),
+            "staleness_floor_enabled": _bool(v, "DAY_STALENESS_FLOOR_ENABLED", True),
+            "staleness_floor_w": _int(v, "DAY_STALENESS_FLOOR_W", 300),
         },
         "telemetry_health": {
             "stale_warning_minutes": _float(v, "TELEMETRY_STALE_WARNING_MINUTES", 10.0),

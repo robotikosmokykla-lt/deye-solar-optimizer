@@ -1,5 +1,34 @@
 # Changelog
 
+## v3.1.4 - 2026-09-07
+
+### The battery refills from energy the cap cannot carry
+
+- The daytime plan treated refilling the battery as something export had to be
+  sacrificed for, so at low SOC it closed the export cap until the battery was full.
+  On a hard-capped site that is backwards: export is limited to the cap while
+  charging is not, so energy above `load + cap` reaches the battery whatever the
+  setpoint is. Only the shortfall beyond that competes with export.
+- `surplus_above_cap_kwh()` computes that energy from the discounted forecast,
+  limited by the battery's charge power, and credits it against the charge deficit.
+- The effect is confined to the middle of the range: below roughly `load + cap` there
+  is no above-cap energy and charging still wins, and on very strong days the budget
+  already saturated the cap. In between - where a capped site spends most of the year
+  - the cap now stays open instead of closing to charge.
+- Opt out with `DAY_ABOVE_CAP_REFILL_ENABLED=false`.
+
+### Setpoints that survive being frozen
+
+- Cloud telemetry goes stale for hours at a time and writes are frozen while it is,
+  so a setpoint is not a decision that can be revised next minute: it may stand until
+  sunset. That makes 0 W the worst available choice - harmless if revisable, a lost
+  afternoon if not.
+- During daylight the recommendation is now floored at `DAY_STALENESS_FLOOR_W`
+  (default 300 W), but only when the discounted forecast still meets the end-of-day
+  requirement after paying for the floor. A day that cannot afford it still charges,
+  and the floor is dropped near sunset.
+- Both terms are reported by `deyeopt-day-plan` and on the dashboard.
+
 ## v3.1.3 - 2026-09-07
 
 ### Load-scaled strategy reserve

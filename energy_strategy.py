@@ -73,9 +73,13 @@ class DayEnergyPlan:
     night_hours: float
     pv_surplus_kwh: float
     stored_surplus_kwh: float
+    surplus_above_cap_kwh: float
+    deficit_covered_by_above_cap_kwh: float
     export_energy_budget_kwh: float
     hours_to_sunset: float
     cap_sustain_hours: float
+    staleness_floor_w: int
+    staleness_floor_reason: str
     full_export_margin_kwh: float
     recommended_export_w: int
     allocation_mode: str
@@ -648,6 +652,36 @@ def strategy_reserve_kwh(
     return clamped, tag
 
 
+def surplus_above_cap_kwh(
+    raw: Dict[str, Any],
+    day: Any,
+    start_at: dt.datetime,
+    load_w: float,
+    factor: float,
+) -> float:
+    """Forecast energy arriving faster than the export cap can carry it away.
+
+    Export is hard-capped but charging is not: on this class of site the battery
+    absorbs several kW while at most one can leave through the meter. Energy above
+    ``load + cap`` therefore goes to the battery or is curtailed *whatever the export
+    setpoint is*, so it refills the battery without competing with export.
+
+    Treating the refill as something export must be sacrificed for is the mistake
+    this corrects: it closes the valve on exactly the days with the most to send.
+    """
+    hard = float(raw.get("grid", {}).get("export_hard_limit_w", 1000))
+    max_charge_w = float(raw.get("analytics", {}).get("battery_max_charge_w", 10000.0))
+    total = 0.0
+    for p in (getattr(day, "points", []) or []):
+        if p.time < start_at or p.time > day.sunset:
+            continue
+        watts = max(0.0, float(p.predicted_w)) * factor
+        # Only what the battery could actually take; the rest is curtailed anyway.
+        absorbed = min(max(0.0, watts - load_w - hard), max_charge_w)
+        total += absorbed / 1000.0 * 0.25
+    return total
+
+
 def _discharge_efficiency(raw: Dict[str, Any]) -> float:
     return max(0.50, min(1.0, float(raw.get("analytics", {}).get("battery_discharge_efficiency", 0.95))))
 
@@ -802,15 +836,26 @@ def build_day_energy_plan(
     input_need = stored_need / charge_eff if stored_need > 0 else 0.0
 
     # Energy balance to sunset. Stored energy above the end-of-day requirement is
-    # exportable; a shortfall must be charged out of PV before anything is exported.
+    # exportable; a shortfall must be charged, but only the part of it that export
+    # actually competes for.
     pv_surplus = safe_pv - house_kwh - overhead_kwh - scheduled_kwh
     stored_delta = (planning_soc - eod_target_soc) / 100.0 * batt_kwh
+    above_cap_kwh = 0.0
+    deficit_from_above_cap = 0.0
     if stored_delta >= 0:
         stored_surplus = stored_delta * discharge_eff
         exportable = pv_surplus + stored_surplus
     else:
         stored_surplus = 0.0
-        exportable = pv_surplus - input_need
+        if bool(raw.get("day_strategy", {}).get("above_cap_refill_enabled", True)):
+            above_cap_kwh = surplus_above_cap_kwh(
+                raw, day, start_at, house_w + overhead_w, safe_factor * bias
+            )
+            # The battery refills from energy the cap cannot carry regardless, so
+            # only the shortfall beyond that has to be taken out of export.
+            deficit_from_above_cap = min(above_cap_kwh, input_need)
+        remaining_deficit = max(0.0, input_need - deficit_from_above_cap)
+        exportable = pv_surplus - remaining_deficit
     available_for_export = max(0.0, exportable)
 
     full_export_energy = hard / 1000.0 * hours
@@ -821,12 +866,45 @@ def build_day_energy_plan(
     # as a flat average never reaches the cap even when the budget can sustain it.
     cap_sustain_hours = (available_for_export / (hard / 1000.0)) if hard > 0 else 0.0
 
+    # Staleness-robust floor.
+    #
+    # A setpoint is not a decision that can be revised next minute: cloud telemetry
+    # routinely goes stale for hours, and writes are frozen while it is, so whatever
+    # is written may stand until sunset. That makes zero the worst available choice -
+    # harmless if revisable, and a whole afternoon of lost export if it is not.
+    #
+    # So during daylight, floor the recommendation at a modest export, but only when
+    # the discounted forecast shows the end-of-day requirement is still met after
+    # paying for it. If the day cannot afford the floor, charging still wins.
+    ds = raw.get("day_strategy", {})
+    floor_w = int(ds.get("staleness_floor_w", 300))
+    floor_applied = False
+    floor_reason = "disabled"
+    if not bool(ds.get("staleness_floor_enabled", True)) or floor_w <= 0:
+        floor_w = 0
+    elif hours <= 0.5:
+        floor_w, floor_reason = 0, "window_closing"
+    else:
+        floor_cost = floor_w / 1000.0 * hours
+        net_charge = max(0.0, safe_pv - house_kwh - overhead_kwh - scheduled_kwh - floor_cost)
+        projected_soc = min(100.0, planning_soc + net_charge * charge_eff / batt_kwh * 100.0) \
+            if batt_kwh > 0 else planning_soc
+        if projected_soc >= required_end_soc:
+            floor_applied = True
+            floor_reason = f"projected_{projected_soc:.0f}pct_ge_required_{required_end_soc:.0f}pct"
+        else:
+            floor_w = 0
+            floor_reason = f"projected_{projected_soc:.0f}pct_below_required_{required_end_soc:.0f}pct"
+
     def _allocate() -> Tuple[int, str]:
         if hours <= 0.01:
             return 0, "window_closed"
         if cap_sustain_hours >= hours - 0.01:
             return hard, "cap_sustained"
-        return quantize_export_floor(average_budget_w, step, hard), "flat_average"
+        budget_w = quantize_export_floor(average_budget_w, step, hard)
+        if floor_applied and budget_w < floor_w:
+            return min(hard, floor_w), "staleness_floor"
+        return budget_w, "flat_average"
 
     if policy.day_mode == "full_export":
         recommended, allocation = (hard, "strategy_full_export") if hours > 0.01 else (0, "window_closed")
@@ -879,9 +957,13 @@ def build_day_energy_plan(
         night_hours=night_hours,
         pv_surplus_kwh=pv_surplus,
         stored_surplus_kwh=stored_surplus,
+        surplus_above_cap_kwh=above_cap_kwh,
+        deficit_covered_by_above_cap_kwh=deficit_from_above_cap,
         export_energy_budget_kwh=available_for_export,
         hours_to_sunset=hours,
         cap_sustain_hours=cap_sustain_hours,
+        staleness_floor_w=int(floor_w if floor_applied else 0),
+        staleness_floor_reason=floor_reason,
         full_export_margin_kwh=full_margin,
         recommended_export_w=recommended,
         allocation_mode=allocation,

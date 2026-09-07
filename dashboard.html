@@ -402,6 +402,8 @@ async function loadLive(){
     ['Intraday PV bias',p?`<b>${fmt(p.intraday_bias,3)}\u00d7</b> <span class="muted">${esc(p.intraday_bias_source||'')}</span>`:'—'],
     ['Remaining PV',p?fmt(p.raw_remaining_pv_kwh,2)+' kWh forecast \u2192 '+fmt(p.bias_corrected_pv_kwh,2)+' bias-corrected \u2192 <b>'+fmt(p.safe_remaining_pv_kwh,2)+'</b> after \u00d7'+fmt(p.safe_forecast_factor,2)+' safety':'—'],
     ['Export budget',p?fmt(p.export_energy_budget_kwh,2)+' kWh <span class="muted">('+fmt(p.pv_surplus_kwh,2)+' PV + '+fmt(p.stored_surplus_kwh,2)+' stored)</span>':'—'],
+    ['Above the cap',p?fmt(p.surplus_above_cap_kwh,2)+' kWh arrives faster than the cap can carry <span class="muted">('+fmt(p.deficit_covered_by_above_cap_kwh,2)+' kWh of the charge deficit covered by it)</span>':'—'],
+    ['Staleness floor',p?(p.staleness_floor_w?fmt(p.staleness_floor_w,0)+' W':'none')+' <span class="muted">'+esc(p.staleness_floor_reason||'')+'</span>':'—'],
     ['Allocation',p?'<span class="mono">'+esc(p.allocation_mode||'')+'</span> · sustains cap '+fmt(p.cap_sustain_hours,2)+' h of '+fmt(p.hours_to_sunset,2)+' h':'—'],
   ])}</dl>`;
   $('stamp').textContent='updated '+hhmm(l.now);

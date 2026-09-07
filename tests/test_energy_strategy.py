@@ -567,3 +567,125 @@ class LoadScaledReserveTests(unittest.TestCase):
             c, _ = self._reserve(load, tag="conservative")
             s, _ = self._reserve(load, tag="save")
             self.assertGreater(s, c, f"load {load}")
+
+
+class AboveCapRefillTests(unittest.TestCase):
+    """v3.1.4: the battery refills from energy the export cap cannot carry anyway."""
+
+    tz = ZoneInfo("Europe/Amsterdam")
+
+    def raw(self, **over):
+        r = EnergyStrategyTests.raw(self)
+        r["day_strategy"] = dict(r["day_strategy"], **{
+            "above_cap_refill_enabled": True, "staleness_floor_enabled": True,
+            "staleness_floor_w": 300, **over})
+        r["water_heater"] = dict(r["water_heater"], enabled=False)
+        r["cooker"] = dict(r["cooker"], enabled=False)
+        return r
+
+    def _day(self, date, peak_w):
+        """A bell-ish day peaking well above the 1 kW export cap."""
+        import math
+        sunrise = dt.datetime.combine(date, dt.time(6, 30), tzinfo=self.tz)
+        sunset = dt.datetime.combine(date, dt.time(20, 0), tzinfo=self.tz)
+        pts, t = [], dt.datetime.combine(date, dt.time.min, tzinfo=self.tz)
+        for _ in range(96):
+            if sunrise < t < sunset:
+                frac = (t - sunrise).total_seconds() / (sunset - sunrise).total_seconds()
+                w = math.sin(math.pi * frac) ** 2 * peak_w
+            else:
+                w = 0.0
+            pts.append(SimpleNamespace(time=t, predicted_w=w))
+            t += dt.timedelta(minutes=15)
+        return SimpleNamespace(date=date, sunrise=sunrise, sunset=sunset, points=pts,
+                               useful_pv_start=sunrise + dt.timedelta(minutes=60),
+                               pv_wakeup=sunrise + dt.timedelta(minutes=30))
+
+    def _plan(self, soc, peak_w, at=dt.time(9, 36), raw=None):
+        date = dt.date(2026, 9, 7)
+        now = dt.datetime.combine(date, at, tzinfo=self.tz)
+        day = self._day(date, peak_w)
+        tomorrow = self._day(date + dt.timedelta(days=1), peak_w)
+        with tempfile.TemporaryDirectory() as td:
+            db = StateDB(str(Path(td) / "state.db"))
+            db.set("last_full_balance_at", (now - dt.timedelta(days=1)).isoformat(), now)
+            try:
+                return build_day_energy_plan(raw or self.raw(), db, day, now, soc, tomorrow)
+            finally:
+                db.close()
+
+    def test_low_soc_no_longer_closes_the_cap_when_the_peak_refills_it(self):
+        """Low SOC with a peak above the export cap: previously 0 W, now exporting.
+
+        Above roughly 6 kW the old logic already saturated the cap and below about
+        2 kW nothing exceeds load+cap, so the correction bites in between - which is
+        where a capped site spends most of its year.
+        """
+        soc, peak = 18.0, 2500
+        new = self._plan(soc=soc, peak_w=peak)
+        old = self._plan(soc=soc, peak_w=peak,
+                         raw=self.raw(above_cap_refill_enabled=False,
+                                      staleness_floor_enabled=False))
+        self.assertEqual(old.recommended_export_w, 0)
+        self.assertGreater(new.recommended_export_w, 0)
+        self.assertGreater(new.deficit_covered_by_above_cap_kwh, 0.0)
+
+    def test_weak_day_at_low_soc_still_charges_first(self):
+        """A day that cannot refill from above-cap surplus must not export."""
+        plan = self._plan(soc=18.0, peak_w=1100)
+        self.assertLessEqual(plan.deficit_covered_by_above_cap_kwh, plan.battery_input_kwh_needed)
+        self.assertEqual(plan.recommended_export_w, 0)
+
+    def test_disabling_above_cap_refill_restores_the_old_behaviour(self):
+        off = self._plan(soc=18.0, peak_w=2500,
+                         raw=self.raw(above_cap_refill_enabled=False,
+                                      staleness_floor_enabled=False))
+        self.assertEqual(off.surplus_above_cap_kwh, 0.0)
+        self.assertEqual(off.recommended_export_w, 0)
+
+    def test_a_day_barely_exceeding_the_cap_still_charges_first(self):
+        """Only the very peak clears load+cap, so the refill credit is negligible."""
+        plan = self._plan(soc=18.0, peak_w=2000)
+        self.assertLess(plan.surplus_above_cap_kwh, 0.2)
+        self.assertEqual(plan.recommended_export_w, 0)
+
+    def test_above_cap_energy_is_limited_by_charge_power(self):
+        r = self.raw()
+        r["analytics"] = dict(r["analytics"], battery_max_charge_w=500.0)
+        limited = self._plan(soc=18.0, peak_w=8000, raw=r)
+        generous = self._plan(soc=18.0, peak_w=8000)
+        self.assertLess(limited.surplus_above_cap_kwh, generous.surplus_above_cap_kwh)
+
+
+class StalenessFloorTests(unittest.TestCase):
+    """v3.1.4: a setpoint may stand for hours, so zero is the worst safe-looking choice."""
+
+    tz = AboveCapRefillTests.tz
+
+    def raw(self, **over):
+        return AboveCapRefillTests.raw(self, **over)
+    _day = AboveCapRefillTests._day
+    _plan = AboveCapRefillTests._plan
+
+    def test_floor_lifts_a_zero_recommendation_when_the_day_can_afford_it(self):
+        floored = self._plan(soc=40.0, peak_w=2600)
+        unfloored = self._plan(soc=40.0, peak_w=2600, raw=self.raw(staleness_floor_enabled=False))
+        self.assertGreaterEqual(floored.recommended_export_w, unfloored.recommended_export_w)
+        if floored.allocation_mode == "staleness_floor":
+            self.assertEqual(floored.recommended_export_w, 300)
+            self.assertEqual(floored.staleness_floor_w, 300)
+
+    def test_floor_is_withheld_when_the_day_cannot_afford_it(self):
+        plan = self._plan(soc=16.0, peak_w=900)
+        self.assertEqual(plan.staleness_floor_w, 0)
+        self.assertIn("below_required", plan.staleness_floor_reason)
+        self.assertEqual(plan.recommended_export_w, 0)
+
+    def test_floor_is_dropped_near_sunset(self):
+        plan = self._plan(soc=40.0, peak_w=2600, at=dt.time(19, 50))
+        self.assertEqual(plan.staleness_floor_w, 0)
+        self.assertIn(plan.staleness_floor_reason, ("window_closing", "disabled"))
+
+    def test_floor_never_exceeds_the_hard_limit(self):
+        plan = self._plan(soc=40.0, peak_w=2600, raw=self.raw(staleness_floor_w=99999))
+        self.assertLessEqual(plan.recommended_export_w, 1000)

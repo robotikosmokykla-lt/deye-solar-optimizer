@@ -14,7 +14,7 @@ from state_db import StateDB
 from strategy_presets import active_strategy
 from config_loader import DEFAULT_ENV, load_config, make_deye_client
 
-VERSION = "3.1.3"
+VERSION = "3.1.4"
 
 
 def num(v: Any, default: float | None = None) -> float | None:
@@ -149,6 +149,12 @@ def main() -> int:
         f"=> export energy={plan.export_energy_budget_kwh:.2f}kWh over {plan.hours_to_sunset:.2f}h; "
         f"sustains {hard}W for {plan.cap_sustain_hours:.2f}h; full-{hard}W margin={plan.full_export_margin_kwh:+.2f}kWh"
     )
+    if plan.surplus_above_cap_kwh > 0 or plan.deficit_covered_by_above_cap_kwh > 0:
+        print(
+            f"AboveCap:  {plan.surplus_above_cap_kwh:.2f}kWh arrives faster than the {hard}W cap can carry; "
+            f"{plan.deficit_covered_by_above_cap_kwh:.2f}kWh of the charge deficit is covered by it"
+        )
+    print(f"Floor:     staleness floor={plan.staleness_floor_w}W ({plan.staleness_floor_reason})")
     print(f"Allocation: {plan.allocation_mode}")
     print(f"RECOMMENDED MAX_SELL_POWER: {plan.recommended_export_w} W")
     print(f"RECOMMENDATION: {recommendation} -- {why}")
