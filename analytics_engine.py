@@ -422,6 +422,50 @@ def _successful_setting_timeline(db_path: str, date: dt.date, hard: int) -> list
     return out
 
 
+def _nearest_forecast_w(fp: list, when: dt.datetime) -> float:
+    return min(fp, key=lambda x: abs((x[0] - when).total_seconds()))[1] if fp else 0.0
+
+
+def _self_calibration_ratio(fp: list, intervals: list[Interval], soc_thr: float,
+                            absorb_w: float) -> tuple[Optional[float], str, int]:
+    """Scale the forecast by how the array performed while it was demonstrably unclipped.
+
+    A cross-day multiplier cannot separate a pessimistic forecast from a clipped
+    afternoon, and the two look identical in the PV trace: measured output falls in
+    both cases. The day's own pre-clipping intervals settle it. Whatever ratio the
+    array was achieving while the battery could still absorb is the best available
+    estimate of what it would have achieved once it could not.
+    """
+    num = den = 0.0
+    n = 0
+    for it in intervals:
+        if it.soc_pct is None or it.soc_pct >= soc_thr:
+            continue
+        # Counter-reconstructed intervals carry an instantaneous power that is an
+        # artifact of sample spacing, not a measurement. Calibrating on those lets a
+        # single reconstruction spike scale the whole day's counterfactual.
+        if it.synthesized_from_counters:
+            continue
+        charge_w = max(0.0, -(it.battery_w or 0.0))
+        # Require headroom actually being used, so "unclipped" is observed, not assumed.
+        if charge_w < absorb_w:
+            continue
+        pred = _nearest_forecast_w(fp, it.start)
+        if pred <= 200.0:
+            continue
+        num += it.pv_w * it.hours
+        den += pred * it.hours
+        n += 1
+    if n < 6 or den <= 0:
+        return None, "insufficient_unclipped_intervals", n
+    ratio = num / den
+    # Beyond this band the forecast model itself is wrong rather than the array
+    # being clipped, and scaling a counterfactual by it produces nonsense.
+    if not (0.5 <= ratio <= 1.6):
+        return None, f"calibration_ratio_{ratio:.2f}_outside_plausible_band", n
+    return ratio, f"self_calibrated_on_{n}_unclipped_intervals", n
+
+
 def curtailment_estimate(raw: Dict[str, Any], db_path: str, date: dt.date, intervals: list[Interval]) -> Dict[str, Any]:
     rows=_forecast_rows(db_path,date)
     rows=[r for r in rows if r.get("points_json")]
@@ -437,15 +481,28 @@ def curtailment_estimate(raw: Dict[str, Any], db_path: str, date: dt.date, inter
     tz=ZoneInfo(raw["site"]["timezone"]); db=StateDB(db_path, readonly=True)
     try: dist,_=forecast_distribution(raw,db,dt.datetime.now(tz),date)
     finally: db.close()
-    factor=dist.get("p50",1.0)
+    learned=dist.get("p50",1.0)
     hard=int(raw["grid"]["export_hard_limit_w"])
     timeline=_successful_setting_timeline(db_path,date,hard)
     soc_thr=float(raw["analytics"].get("curtailment_soc_threshold_pct",98.0))
     margin=float(raw["analytics"].get("curtailment_export_margin_w",100.0))
     min_gap=float(raw["analytics"].get("curtailment_min_gap_w",300.0))
-    total=0.0; flagged=0
+    absorb_w=float(raw["analytics"].get("curtailment_max_charge_w",300.0))
+    installed_w=sum(float(a.get("kwp",0.0)) for a in raw.get("pv",{}).get("arrays",[]))*1000.0
+    array_ceiling_w=float(raw["analytics"].get("curtailment_array_ceiling_w", 0.0)) or (installed_w or 1e9)
+    calib,calib_src,calib_n=_self_calibration_ratio(fp,intervals,soc_thr,absorb_w)
+    factor = calib if calib is not None else learned
+    if calib is None:
+        calib_src=f"{calib_src}_fell_back_to_learned_p50"
+    total=0.0; flagged=0; absorbing_skipped=0; synth_skipped=0
+    measured_kwh=sum(it.pv_w/1000.0*it.hours for it in intervals)
     for it in intervals:
         if it.soc_pct is None or it.soc_pct<soc_thr or it.grid_w is None:
+            continue
+        # A battery still taking charge is a sink: whatever the PV trace shows, the
+        # surplus had somewhere to go and was not curtailed.
+        if max(0.0,-(it.battery_w or 0.0)) > absorb_w:
+            absorbing_skipped+=1
             continue
         setting=hard
         for t,w in timeline:
@@ -456,11 +513,36 @@ def curtailment_estimate(raw: Dict[str, Any], db_path: str, date: dt.date, inter
         actual_export=max(0.0,-it.grid_w)
         if actual_export < max(0.0,setting-margin):
             continue
-        pred=min(fp,key=lambda x:abs((x[0]-it.start).total_seconds()))[1]*factor
+        if it.synthesized_from_counters:
+            absorbing_skipped+=0   # counted separately below
+            synth_skipped+=1
+            continue
+        # The counterfactual cannot exceed what the array is physically able to make.
+        # Without this a mis-calibrated forecast scales into an impossible potential.
+        pred=min(_nearest_forecast_w(fp,it.start)*factor, array_ceiling_w)
         gap=max(0.0,pred-it.pv_w)
         if gap>=min_gap:
             total += gap/1000.0*it.hours; flagged+=1
-    return {"estimated_kwh":round(total,3),"flagged_intervals":flagged,"status":"rough_model_estimate","forecast_factor":round(factor,3)}
+    return {
+        "estimated_kwh":round(total,3),
+        "flagged_intervals":flagged,
+        "intervals_skipped_battery_absorbing":absorbing_skipped,
+        "intervals_skipped_reconstructed":synth_skipped,
+        "status":"model_estimate_self_calibrated" if calib is not None else "model_estimate_uncalibrated",
+        "forecast_factor":round(factor,3),
+        "calibration":calib_src,
+        "learned_p50":round(learned,3),
+        "array_ceiling_w":round(array_ceiling_w),
+        "implied_potential_kwh":round(measured_kwh+total,2),
+        "implied_kwh_per_kwp":round((measured_kwh+total)/(installed_w/1000.0),2) if installed_w else None,
+        # The estimate rests on scaling a forecast that may itself be miscalibrated,
+        # so it states the daily yield it implies. A value far above what the array
+        # can plausibly reach at this latitude and season means the factor is wrong,
+        # not that this much energy was lost.
+        "plausible": (None if not installed_w
+                      else (measured_kwh+total)/(installed_w/1000.0) <= float(
+                          raw["analytics"].get("curtailment_max_kwh_per_kwp", 3.6))),
+    }
 
 
 def mppt_learning(raw: Dict[str, Any], db_path: str, date: dt.date, intervals: list[Interval]) -> Dict[str, Any]:

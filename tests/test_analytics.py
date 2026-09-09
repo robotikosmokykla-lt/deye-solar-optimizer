@@ -3,6 +3,7 @@ import os
 import sqlite3
 import tempfile
 import unittest
+from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 from analytics_engine import Interval, simulate_static, oracle_replay
@@ -176,3 +177,92 @@ class ControlLogTests(unittest.TestCase):
             out = control_log(self.raw(path), path, day)
         gaps = [s for s in out["segments"] if s["state"] == "no_data" and s["minutes"] > 60]
         self.assertTrue(gaps, "a two-hour tick gap must show as no_data")
+
+
+class CurtailmentEstimateTests(unittest.TestCase):
+    """v3.1.6: separate a clipped array from a cloudy one."""
+
+    tz = ZoneInfo("Europe/Amsterdam")
+
+    def raw(self, path, **an):
+        r = AnalyticsTests.raw(self)
+        r["site"] = {"timezone": "Europe/Amsterdam"}
+        r["logging"] = {"state_db": path}
+        r["pv"] = {"arrays": [{"name": "s", "kwp": 10.0, "tilt_deg": 35, "azimuth_deg": 0}]}
+        r["analytics"] = dict(r["analytics"], **{
+            "curtailment_soc_threshold_pct": 98.0, "curtailment_export_margin_w": 100.0,
+            "curtailment_min_gap_w": 300.0, "curtailment_max_charge_w": 300.0,
+            "curtailment_max_kwh_per_kwp": 3.6, **an})
+        return r
+
+    def _db(self, path, date, forecast_w):
+        db = StateDB(path)
+        t = dt.datetime.combine(date, dt.time.min, tzinfo=self.tz)
+        pts = []
+        for i in range(96):
+            ts = t + dt.timedelta(minutes=15 * i)
+            pts.append(SimpleNamespace(time=ts, predicted_w=forecast_w if 8 <= ts.hour < 18 else 0.0))
+        db.add_forecast(SimpleNamespace(
+            date=date, sunrise=t.replace(hour=7), sunset=t.replace(hour=20),
+            pv_wakeup=t.replace(hour=8), useful_pv_start=t.replace(hour=8),
+            expected_kwh=1.0, array_kwh={"s": 1.0}, points=pts,
+            fetched_at=t.replace(hour=1)))
+        db.close()
+
+    def _iv(self, date, hour, pv_w, soc, battery_w, grid_w=-1000.0, synth=False):
+        a = dt.datetime.combine(date, dt.time(hour, 0), tzinfo=self.tz)
+        return Interval(a, a + dt.timedelta(hours=1), 1.0, pv_w, 300.0, soc,
+                        battery_w, grid_w, {}, synth)
+
+    def test_full_battery_with_clipped_pv_is_reported(self):
+        from analytics_engine import curtailment_estimate
+        date = dt.date(2026, 9, 8)
+        with tempfile.TemporaryDirectory() as td:
+            path = os.path.join(td, "s.db")
+            self._db(path, date, 4000.0)
+            ivs = ([self._iv(date, h, 4000.0, 60.0, -3000.0) for h in range(8, 14)] +
+                   [self._iv(date, h, 1500.0, 100.0, -20.0) for h in range(14, 18)])
+            out = curtailment_estimate(self.raw(path), path, date, ivs)
+        self.assertGreater(out["estimated_kwh"], 5.0)
+        self.assertEqual(out["flagged_intervals"], 4)
+        self.assertIn("self_calibrated", out["calibration"])
+
+    def test_a_battery_still_absorbing_is_not_curtailment(self):
+        """Same low PV, but the battery is taking 3 kW: the surplus had somewhere to go."""
+        from analytics_engine import curtailment_estimate
+        date = dt.date(2026, 9, 8)
+        with tempfile.TemporaryDirectory() as td:
+            path = os.path.join(td, "s.db")
+            self._db(path, date, 4000.0)
+            ivs = ([self._iv(date, h, 4000.0, 60.0, -3000.0) for h in range(8, 14)] +
+                   [self._iv(date, h, 1500.0, 100.0, -3000.0) for h in range(14, 18)])
+            out = curtailment_estimate(self.raw(path), path, date, ivs)
+        self.assertEqual(out["estimated_kwh"], 0.0)
+        self.assertEqual(out["intervals_skipped_battery_absorbing"], 4)
+
+    def test_reconstructed_intervals_cannot_set_the_calibration(self):
+        """A counter-reconstruction spike must not scale the whole counterfactual."""
+        from analytics_engine import curtailment_estimate
+        date = dt.date(2026, 9, 8)
+        with tempfile.TemporaryDirectory() as td:
+            path = os.path.join(td, "s.db")
+            self._db(path, date, 4000.0)
+            spikes = [self._iv(date, h, 13000.0, 60.0, -3000.0, synth=True) for h in range(8, 14)]
+            clipped = [self._iv(date, h, 1500.0, 100.0, -20.0) for h in range(14, 18)]
+            out = curtailment_estimate(self.raw(path), path, date, spikes + clipped)
+        # With only synthesized intervals available there is nothing to calibrate on.
+        self.assertNotIn("self_calibrated", out["calibration"])
+        self.assertEqual(out["forecast_factor"], out["learned_p50"])
+
+    def test_an_implausible_daily_yield_is_flagged(self):
+        from analytics_engine import curtailment_estimate
+        date = dt.date(2026, 9, 8)
+        with tempfile.TemporaryDirectory() as td:
+            path = os.path.join(td, "s.db")
+            self._db(path, date, 9000.0)
+            ivs = ([self._iv(date, h, 9000.0, 60.0, -6000.0) for h in range(8, 14)] +
+                   [self._iv(date, h, 500.0, 100.0, -10.0) for h in range(14, 18)])
+            out = curtailment_estimate(self.raw(path, curtailment_max_kwh_per_kwp=1.0),
+                                       path, date, ivs)
+        self.assertFalse(out["plausible"])
+        self.assertIsNotNone(out["implied_kwh_per_kwp"])

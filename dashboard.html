@@ -443,7 +443,17 @@ function render(d,cap){
   const g=d.battery_aging||{};
   $('aging').innerHTML=kv([['Throughput',fmt(g.throughput_kwh)+' kWh'],['EFC',fmt(g.equivalent_full_cycles,3)],['Average SOC',fmt(g.average_soc_pct,1)+'%'],['Hours ≥95%',fmt(g.hours_soc_ge_95)+' h'],['Hours ≤20%',fmt(g.hours_soc_le_20)+' h'],['Max C-rate',fmt(g.max_c_rate,3)]]);
   const cu=d.curtailment||{};
-  $('curtail').innerHTML=kv([['Estimated lost',`<b>${fmt(cu.estimated_kwh)} kWh</b>`],['Flagged intervals',cu.flagged_intervals||0],['Basis',esc(cu.status||'')]]);
+  const plaus=cu.plausible===false
+    ? '<span style="color:var(--critical)">implausible — treat as an upper bound</span>'
+    : (cu.plausible===true?'<span style="color:var(--good-ink)">within a plausible daily yield</span>':'—');
+  $('curtail').innerHTML=kv([
+    ['Estimated lost',`<b>${fmt(cu.estimated_kwh)} kWh</b>`],
+    ['Flagged intervals',cu.flagged_intervals||0],
+    ['Skipped',`${cu.intervals_skipped_battery_absorbing||0} battery absorbing · ${cu.intervals_skipped_reconstructed||0} reconstructed`],
+    ['Forecast factor',`${fmt(cu.forecast_factor,3)} <span class="muted">${esc(cu.calibration||'')}</span>`],
+    ['Implies',`${fmt(cu.implied_potential_kwh,1)} kWh potential · ${fmt(cu.implied_kwh_per_kwp,2)} kWh/kWp`],
+    ['Sanity',plaus],
+    ['Basis',esc(cu.status||'')]]);
   const m=d.morning_learning||{};
   $('morning').innerHTML=kv([['Status',esc(m.status||'')],['Samples',m.samples||0],['Median error',fmt(m.median_error_minutes,1)+' min'],['Applied bias',fmt(m.applied_bias_minutes,1)+' min']]);
   const e=d.economics||{};

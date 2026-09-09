@@ -294,6 +294,9 @@ def load_config(path: str = DEFAULT_ENV) -> Dict[str, Any]:
             "curtailment_soc_threshold_pct": _float(v, "ANALYTICS_CURTAILMENT_SOC_THRESHOLD_PCT", 98.0),
             "curtailment_export_margin_w": _float(v, "ANALYTICS_CURTAILMENT_EXPORT_MARGIN_W", 100.0),
             "curtailment_min_gap_w": _float(v, "ANALYTICS_CURTAILMENT_MIN_GAP_W", 300.0),
+            "curtailment_max_charge_w": _float(v, "ANALYTICS_CURTAILMENT_MAX_CHARGE_W", 300.0),
+            "curtailment_array_ceiling_w": _float(v, "ANALYTICS_CURTAILMENT_ARRAY_CEILING_W", 0.0),
+            "curtailment_max_kwh_per_kwp": _float(v, "ANALYTICS_CURTAILMENT_MAX_KWH_PER_KWP", 3.6),
             "mppt_map": json.loads(str(_get(v, "ANALYTICS_MPPT_MAP_JSON", "{}"))),
         },
         "economic": {

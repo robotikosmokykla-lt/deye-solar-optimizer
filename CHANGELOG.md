@@ -1,5 +1,30 @@
 # Changelog
 
+## v3.1.6 - 2026-09-09
+
+### Curtailment estimate that can tell clipping from cloud
+
+Measured PV falls both when the sky clouds over and when the array is clipped
+because the battery is full and the export cap is closed. The two are
+indistinguishable in the PV trace, and the estimator could not separate them.
+
+- Only count an interval when the battery is demonstrably *not* absorbing. A
+  battery still taking charge is a sink: the surplus had somewhere to go.
+- Calibrate the counterfactual against the day's own intervals from before the
+  battery filled, rather than a cross-day multiplier. A pessimistic forecast and a
+  clipped afternoon look the same across days but not within one.
+- Exclude counter-reconstructed intervals from both the calibration and the sum:
+  their instantaneous power is an artifact of sample spacing, and one spike could
+  otherwise scale the whole day's counterfactual.
+- Refuse to calibrate on a ratio outside a plausible band, and clamp the
+  counterfactual to the installed array rating.
+- Report the implied daily yield in kWh/kWp and a `plausible` flag, so an estimate
+  resting on a miscalibrated forecast declares itself instead of being trusted.
+
+Note that the replay-based curtailment column is structurally blind to this: it
+replays measured PV, which is already clipped, so it cannot see energy the panels
+never made. Use this estimate, not that column, to judge clipping.
+
 ## v3.1.5 - 2026-09-07
 
 ### Honest oracle benchmark
