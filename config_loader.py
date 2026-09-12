@@ -229,6 +229,8 @@ def load_config(path: str = DEFAULT_ENV) -> Dict[str, Any]:
             "max_telemetry_age_minutes": _float(v, "DAY_MAX_TELEMETRY_AGE_MINUTES", 15.0),
             "morning_restore_window_minutes": _int(v, "DAY_MORNING_RESTORE_WINDOW_MINUTES", 90),
             "max_budget_writes_per_day": _int(v, "DAY_MAX_BUDGET_WRITES_PER_DAY", 2),
+            "morning_settle_minutes": _int(v, "DAY_MORNING_SETTLE_MINUTES", 40),
+            "max_morning_writes_per_day": _int(v, "DAY_MAX_MORNING_WRITES_PER_DAY", 1),
             "curtailment_override_enabled": _bool(v, "DAY_CURTAILMENT_OVERRIDE_ENABLED", True),
             "curtailment_override_soc_pct": _float(v, "DAY_CURTAILMENT_OVERRIDE_SOC_PCT", 98.0),
             "curtailment_override_charge_w": _float(v, "DAY_CURTAILMENT_OVERRIDE_CHARGE_W", 300.0),

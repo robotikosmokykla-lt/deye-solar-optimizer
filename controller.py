@@ -569,6 +569,13 @@ class Controller:
                             minutes=int(cget(self.cfg, "day_strategy", "morning_restore_window_minutes", 90))
                         )
                         reason = "morning_day_restore" if now < morning_window else "day_energy_budget"
+                        if reason == "morning_day_restore":
+                            settle = int(cget(self.cfg, "day_strategy", "morning_settle_minutes", 40))
+                            self.db.set(
+                                "morning_settle_until",
+                                (today_floor_deadline + dt.timedelta(minutes=settle)).isoformat(),
+                                now,
+                            )
                     except Exception as exc:
                         self.log.emit("WARN", "day_energy_plan_failed", error=str(exc), strategy=policy.tag)
                         # Conservative means fail closed on export. Risky explicitly
@@ -746,6 +753,26 @@ class Controller:
             max_day = max(0, int(cget(self.cfg, "day_strategy", "max_budget_writes_per_day", 1)))
             if self.db.successful_writes_since_by_reason(start.isoformat(), "day_energy_budget") >= max_day:
                 return False, "day energy-budget successful-write allowance exhausted"
+
+        if reason == "morning_day_restore":
+            # The morning recommendation climbs as SOC rises and the forecast firms,
+            # and each step clears the write threshold, so chasing it spends several
+            # writes inside an hour and leaves nothing for the afternoon. Wait for it
+            # to settle, then commit once. The cost is a few minutes at the old cap;
+            # the saving is the writes that let the afternoon be corrected at all.
+            settle_until = self.db.get("morning_settle_until")
+            if settle_until:
+                try:
+                    until = dt.datetime.fromisoformat(settle_until)
+                    if now < until:
+                        mins = (until - now).total_seconds() / 60.0
+                        return False, f"morning recommendation still settling ({mins:.0f} min)"
+                except Exception:
+                    pass
+            start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            max_morning = max(0, int(cget(self.cfg, "day_strategy", "max_morning_writes_per_day", 1)))
+            if self.db.successful_writes_since_by_reason(start.isoformat(), "morning_day_restore") >= max_morning:
+                return False, "morning-restore successful-write allowance exhausted"
         block_until = self.db.get("failed_order_retry_after")
         if block_until:
             try:
@@ -1169,7 +1196,7 @@ class Controller:
             "INFO",
             "controller_start",
             pid=os.getpid(),
-            version="3.1.8",
+            version="3.1.9",
             dry_run=bool(cget(self.cfg, "control", "dry_run", True)),
             write_api=str(cget(self.cfg, "control", "write_api", "power_update")),
             control_mode="direct_write_only",

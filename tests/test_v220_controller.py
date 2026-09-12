@@ -186,3 +186,68 @@ class CurtailmentOverrideTests(unittest.TestCase):
             snap = self.snap(ctl, now, soc=99.0, pv_w=2000, battery_w=800)
             self.assertEqual(ctl.curtailment_override(now, snap, 0, 1000)[0], None)
             ctl.db.close()
+
+
+class MorningRampTests(unittest.TestCase):
+    """v3.1.9: don't spend the day's write budget chasing a settling recommendation."""
+
+    def make_ctl(self, td):
+        ctl = V220ControllerTests.make_ctl(self, td)
+        ctl.cfg.raw["day_strategy"].update({
+            "morning_settle_minutes": 40, "max_morning_writes_per_day": 1,
+            "max_budget_writes_per_day": 2,
+        })
+        ctl.cfg.raw["control"].update({
+            "max_successful_writes_per_day": 4, "max_order_submissions_per_day": 8,
+            "min_write_interval_minutes": 0, "min_write_delta_w": 200,
+            "bonus_write_enabled": False,
+        })
+        return ctl
+
+    def test_writes_are_held_until_the_recommendation_settles(self):
+        with tempfile.TemporaryDirectory() as td:
+            ctl = self.make_ctl(td)
+            handoff = dt.datetime(2026, 9, 12, 8, 50, tzinfo=ctl.tz)
+            ctl.db.set("morning_settle_until", (handoff + dt.timedelta(minutes=40)).isoformat(), handoff)
+            ctl.current_setting_w = 0
+            # The 400 -> 600 -> 1000 ramp all falls inside the settle window.
+            for offset in (0, 35, 38):
+                ok, why = ctl.can_write(handoff + dt.timedelta(minutes=offset), 1000, "morning_day_restore")
+                self.assertFalse(ok, f"+{offset} min should be held")
+                self.assertIn("settling", why)
+            ok, why = ctl.can_write(handoff + dt.timedelta(minutes=41), 1000, "morning_day_restore")
+            self.assertTrue(ok, why)
+            ctl.db.close()
+
+    def test_only_one_morning_write_per_day(self):
+        with tempfile.TemporaryDirectory() as td:
+            ctl = self.make_ctl(td)
+            now = dt.datetime(2026, 9, 12, 9, 40, tzinfo=ctl.tz)
+            ctl.db.set("morning_settle_until", (now - dt.timedelta(minutes=10)).isoformat(), now)
+            ctl.current_setting_w = 0
+            self.assertTrue(ctl.can_write(now, 1000, "morning_day_restore")[0])
+            ctl.db.add_write(now, 0, 1000, "morning_day_restore", 1, "success", "ok", accepted=True)
+            ok, why = ctl.can_write(now + dt.timedelta(minutes=5), 600, "morning_day_restore")
+            self.assertFalse(ok)
+            self.assertIn("morning-restore", why)
+            ctl.db.close()
+
+    def test_the_afternoon_budget_is_not_consumed_by_the_morning(self):
+        """The point of the change: leave writes for when they matter."""
+        with tempfile.TemporaryDirectory() as td:
+            ctl = self.make_ctl(td)
+            now = dt.datetime(2026, 9, 12, 9, 40, tzinfo=ctl.tz)
+            ctl.current_setting_w = 1000
+            ctl.db.add_write(now, 0, 1000, "morning_day_restore", 1, "success", "ok", accepted=True)
+            ok, why = ctl.can_write(now + dt.timedelta(hours=5), 300, "day_energy_budget")
+            self.assertTrue(ok, why)
+            ctl.db.close()
+
+    def test_settling_does_not_gate_other_reasons(self):
+        with tempfile.TemporaryDirectory() as td:
+            ctl = self.make_ctl(td)
+            now = dt.datetime(2026, 9, 12, 9, 0, tzinfo=ctl.tz)
+            ctl.db.set("morning_settle_until", (now + dt.timedelta(minutes=30)).isoformat(), now)
+            ctl.current_setting_w = 0
+            self.assertTrue(ctl.can_write(now, 1000, "day_energy_budget")[0])
+            ctl.db.close()

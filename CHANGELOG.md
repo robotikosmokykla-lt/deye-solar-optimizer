@@ -1,5 +1,25 @@
 # Changelog
 
+## v3.1.9 - 2026-09-12
+
+### Stop the morning ramp eating the day's write budget
+
+The daytime recommendation climbs through the morning as SOC rises and the forecast
+firms. Each step cleared the minimum write delta, so the controller chased it: on
+2026-09-12 it wrote 400 W, then 600 W, then 1000 W within 38 minutes. That left one
+write for the rest of the day, which was spent at 14:19 dropping the cap to 300 W -
+after which a full battery sat clipping until midnight with no budget left to reopen.
+
+- Hold morning-restore writes until the recommendation has settled
+  (`DAY_MORNING_SETTLE_MINUTES`, default 40 from the PV handoff), then commit once.
+- Cap morning-restore writes at `DAY_MAX_MORNING_WRITES_PER_DAY` (default 1), the
+  same shape as the existing day-energy-budget allowance.
+- Other reasons are unaffected, so the curtailment override and the evening plan keep
+  their access to the budget.
+
+The cost is a few minutes at the previous cap; the saving is having writes left when
+the afternoon needs correcting.
+
 ## v3.1.8 - 2026-09-12
 
 ### Learn the forecast error from the sky, not from the meter
