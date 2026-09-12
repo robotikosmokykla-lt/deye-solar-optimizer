@@ -75,6 +75,8 @@ class DayEnergyPlan:
     stored_surplus_kwh: float
     surplus_above_cap_kwh: float
     deficit_covered_by_above_cap_kwh: float
+    battery_headroom_kwh: float
+    forced_export_kwh: float
     export_energy_budget_kwh: float
     hours_to_sunset: float
     cap_sustain_hours: float
@@ -574,8 +576,24 @@ def intraday_forecast_bias(
     window_h = float(ds.get("intraday_bias_window_hours", 3.0))
     date = getattr(day, "date", now.date())
 
+    # Stop at the last sample taken while the array was still unclipped. Past that
+    # point measured PV is limited by the inverter rather than the sky, and feeding
+    # it back in would read a clipped sunny afternoon as bad weather - which shrinks
+    # the budget, closes the export cap further, and clips harder still.
+    hysteresis = float(ds.get("intraday_clip_soc_hysteresis_pct", 5.0))
+    ceiling = float(ds.get("curtailment_override_soc_pct", 98.0)) - hysteresis
+    min_charge = float(ds.get("curtailment_override_charge_w", 300.0))
+    clipped_tail = False
+    latest = None
     try:
-        latest = db.day_production_at(date)
+        if hasattr(db, "last_unclipped_production"):
+            latest = db.last_unclipped_production(date, ceiling, min_charge)
+            newest = db.day_production_at(date)
+            if latest and newest and latest[1] < newest[1]:
+                clipped_tail = True
+        if latest is None:
+            latest = db.day_production_at(date)
+            clipped_tail = False
     except Exception:
         latest = None
     if not latest:
@@ -613,6 +631,8 @@ def intraday_forecast_bias(
     bias = max(lo, min(hi, shrunk))
     stale_min = (now - as_of).total_seconds() / 60.0
     tag = f"intraday_{source}_r{ratio:.2f}_w{weight:.2f}"
+    if clipped_tail:
+        tag += "_pre_clipping"
     if stale_min > 30.0:
         tag += f"_stale{stale_min:.0f}min"
     return bias, tag
@@ -858,6 +878,17 @@ def build_day_energy_plan(
         exportable = pv_surplus - remaining_deficit
     available_for_export = max(0.0, exportable)
 
+    # Forced export: surplus the battery has no room left to take.
+    #
+    # Holding the cap back only preserves energy if there is somewhere to preserve it.
+    # Once the remaining PV surplus exceeds the battery's remaining headroom, the
+    # excess leaves through the meter or is thrown away - conserving it is not one of
+    # the options. Near a full battery this is what keeps the cap open.
+    headroom_input_kwh = max(0.0, (100.0 - planning_soc) / 100.0 * batt_kwh) / charge_eff
+    forced_export_kwh = max(0.0, pv_surplus - headroom_input_kwh)
+    if forced_export_kwh > available_for_export:
+        available_for_export = forced_export_kwh
+
     full_export_energy = hard / 1000.0 * hours
     full_margin = available_for_export - full_export_energy
     average_budget_w = (available_for_export / hours * 1000.0) if hours > 0 else 0.0
@@ -959,6 +990,8 @@ def build_day_energy_plan(
         stored_surplus_kwh=stored_surplus,
         surplus_above_cap_kwh=above_cap_kwh,
         deficit_covered_by_above_cap_kwh=deficit_from_above_cap,
+        battery_headroom_kwh=headroom_input_kwh,
+        forced_export_kwh=forced_export_kwh,
         export_energy_budget_kwh=available_for_export,
         hours_to_sunset=hours,
         cap_sustain_hours=cap_sustain_hours,

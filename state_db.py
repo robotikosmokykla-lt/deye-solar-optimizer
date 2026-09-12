@@ -468,6 +468,36 @@ class StateDB:
     def recent_api_failures(self, since_iso: str) -> int:
         return int(self.conn.execute("SELECT COUNT(*) c FROM api_events WHERE ts>=? AND ok=0", (since_iso,)).fetchone()["c"])
 
+    def last_unclipped_production(self, date: dt.date, soc_ceiling_pct: float,
+                                  min_charge_w: float):
+        """Newest sample on `date` at which the array was demonstrably not clipped.
+
+        With the battery at its ceiling and absorbing nothing, measured PV is held
+        down by the inverter, not by the sky. Comparing that against a forecast makes
+        a sunny afternoon look overcast, so anything that learns from actual-versus-
+        forecast has to stop at the last sample taken while there was still somewhere
+        for the surplus to go.
+
+        ``soc_ceiling_pct`` is applied as a band, not a line: a load transient can pull
+        a full battery a point or two below the ceiling without giving it any real room,
+        and the array stays clipped throughout. Only sustained charging proves a sink.
+        """
+        row = self.conn.execute(
+            "SELECT daily_production_kwh k, logger_at t FROM telemetry "
+            "WHERE substr(logger_at,1,10)=? AND daily_production_kwh IS NOT NULL "
+            "  AND logger_at IS NOT NULL "
+            "  AND NOT (soc IS NOT NULL AND soc >= ? "
+            "           AND COALESCE(-battery_power, 0) < ?) "
+            "ORDER BY logger_at DESC LIMIT 1",
+            (date.isoformat(), float(soc_ceiling_pct), float(min_charge_w)),
+        ).fetchone()
+        if row is None or row["k"] is None or not row["t"]:
+            return None
+        try:
+            return float(row["k"]), dt.datetime.fromisoformat(row["t"])
+        except Exception:
+            return None
+
     def day_production_at(self, date: dt.date, at_or_before: Optional[dt.datetime] = None):
         """Inverter daily-production counter for a local date, with its sample time.
 

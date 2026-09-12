@@ -231,6 +231,7 @@ def load_config(path: str = DEFAULT_ENV) -> Dict[str, Any]:
             "curtailment_override_soc_pct": _float(v, "DAY_CURTAILMENT_OVERRIDE_SOC_PCT", 98.0),
             "curtailment_override_charge_w": _float(v, "DAY_CURTAILMENT_OVERRIDE_CHARGE_W", 300.0),
             "curtailment_override_min_pv_w": _float(v, "DAY_CURTAILMENT_OVERRIDE_MIN_PV_W", 100.0),
+            "intraday_clip_soc_hysteresis_pct": _float(v, "DAY_INTRADAY_CLIP_SOC_HYSTERESIS_PCT", 5.0),
             "intraday_bias_enabled": _bool(v, "DAY_INTRADAY_BIAS_ENABLED", True),
             "intraday_bias_window_hours": _float(v, "DAY_INTRADAY_BIAS_WINDOW_HOURS", 3.0),
             "intraday_bias_min_forecast_kwh": _float(v, "DAY_INTRADAY_BIAS_MIN_FORECAST_KWH", 1.0),

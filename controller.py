@@ -1135,7 +1135,7 @@ class Controller:
             "INFO",
             "controller_start",
             pid=os.getpid(),
-            version="3.1.6",
+            version="3.1.7",
             dry_run=bool(cget(self.cfg, "control", "dry_run", True)),
             write_api=str(cget(self.cfg, "control", "write_api", "power_update")),
             control_mode="direct_write_only",

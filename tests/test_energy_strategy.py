@@ -689,3 +689,118 @@ class StalenessFloorTests(unittest.TestCase):
     def test_floor_never_exceeds_the_hard_limit(self):
         plan = self._plan(soc=40.0, peak_w=2600, raw=self.raw(staleness_floor_w=99999))
         self.assertLessEqual(plan.recommended_export_w, 1000)
+
+
+class ClippingFeedbackTests(unittest.TestCase):
+    """v3.1.7: clipped samples must not be read back as bad weather."""
+
+    tz = ZoneInfo("Europe/Amsterdam")
+
+    def raw(self, **over):
+        r = EnergyStrategyTests.raw(self)
+        r["day_strategy"] = dict(r["day_strategy"], **{
+            "intraday_bias_enabled": True, "intraday_bias_window_hours": 3.0,
+            "intraday_bias_min_forecast_kwh": 1.0, "intraday_bias_trust_kwh": 3.0,
+            "intraday_bias_min": 0.40, "intraday_bias_max": 1.60,
+            "curtailment_override_soc_pct": 98.0,
+            "curtailment_override_charge_w": 300.0, **over})
+        return r
+
+    def _day(self, date, w=4000):
+        start = dt.datetime.combine(date, dt.time(6, 0), tzinfo=self.tz)
+        pts = [SimpleNamespace(time=start + dt.timedelta(minutes=15 * i), predicted_w=w)
+               for i in range(56)]
+        return SimpleNamespace(date=date, sunrise=start, sunset=start + dt.timedelta(hours=14),
+                               points=pts)
+
+    def _db(self, td, samples):
+        db = StateDB(str(Path(td) / "state.db"))
+        for at, kwh, soc, batt_w in samples:
+            db.add_device_telemetry(
+                at, at,
+                {"SOC": str(soc), "TotalSolarPower": "3000", "BatteryPower": str(batt_w),
+                 "TotalGridPower": "-1000", "TotalConsumptionPower": "300",
+                 "DailyActiveProduction": str(kwh)},
+                control_soc=float(soc), soc_confidence="FRESH",
+                telemetry_age_minutes=1.0, raw_json={})
+        return db
+
+    def test_bias_stops_at_the_last_unclipped_sample(self):
+        """A clipped sunny afternoon must not be learned as a cloudy one."""
+        from energy_strategy import intraday_forecast_bias
+        date = dt.date(2026, 9, 12)
+        day = self._day(date)
+        noon = dt.datetime.combine(date, dt.time(12, 0), tzinfo=self.tz)
+        now = noon + dt.timedelta(hours=3)
+        with tempfile.TemporaryDirectory() as td:
+            # Tracking forecast exactly until noon, then clipped: SOC pinned at 100%,
+            # battery absorbing nothing, so production barely advances.
+            db = self._db(td, [
+                (noon - dt.timedelta(hours=6), 0.0, 60, -3000),
+                (noon, 24.0, 92, -2500),
+                (noon + dt.timedelta(hours=1), 24.6, 100, -10),
+                (noon + dt.timedelta(hours=2), 25.2, 100, -5),
+                (now, 25.8, 100, -5),
+            ])
+            bias, src = intraday_forecast_bias(self.raw(), db, day, now)
+            db.close()
+        self.assertIn("pre_clipping", src)
+        self.assertGreater(bias, 0.9, "the clipped tail must not drag the bias down")
+
+    def test_without_clipping_the_bias_still_tracks_the_day(self):
+        from energy_strategy import intraday_forecast_bias
+        date = dt.date(2026, 9, 12)
+        day = self._day(date)
+        now = dt.datetime.combine(date, dt.time(12, 0), tzinfo=self.tz)
+        with tempfile.TemporaryDirectory() as td:
+            # Genuinely poor output with the battery still absorbing: real weather.
+            db = self._db(td, [
+                (now - dt.timedelta(hours=6), 0.0, 40, -2000),
+                (now, 6.0, 55, -2000),
+            ])
+            bias, src = intraday_forecast_bias(self.raw(), db, day, now)
+            db.close()
+        self.assertNotIn("pre_clipping", src)
+        self.assertLess(bias, 1.0)
+
+
+class ForcedExportTests(unittest.TestCase):
+    """v3.1.7: a battery with no headroom cannot absorb surplus, so holding back is moot."""
+
+    tz = ZoneInfo("Europe/Amsterdam")
+    raw = ClippingFeedbackTests.raw
+    _day = ClippingFeedbackTests._day
+
+    def _plan(self, soc, peak_w, raw=None):
+        date = dt.date(2026, 9, 12)
+        now = dt.datetime.combine(date, dt.time(13, 0), tzinfo=self.tz)
+        day = self._day(date, peak_w)
+        # A weak tomorrow, so the plan wants to hold the day target and conserve.
+        tomorrow = self._day(date + dt.timedelta(days=1), 300)
+        with tempfile.TemporaryDirectory() as td:
+            db = StateDB(str(Path(td) / "state.db"))
+            db.set("last_full_balance_at", (now - dt.timedelta(days=1)).isoformat(), now)
+            try:
+                return build_day_energy_plan(raw or self.raw(), db, day, now, soc, tomorrow)
+            finally:
+                db.close()
+
+    def test_full_battery_forces_export_even_when_conserving(self):
+        plan = self._plan(soc=99.0, peak_w=4000)
+        self.assertEqual(plan.end_of_day_target_reason, "hold_day_target_forecast_cannot_refill")
+        self.assertLess(plan.battery_headroom_kwh, 0.5)
+        self.assertGreater(plan.forced_export_kwh, 0.0)
+        self.assertGreater(plan.recommended_export_w, 300,
+                           "surplus the battery cannot take must leave through the meter")
+
+    def test_room_in_the_battery_means_no_forced_export(self):
+        """Surplus smaller than the remaining headroom can all be stored."""
+        plan = self._plan(soc=45.0, peak_w=1500)
+        self.assertGreater(plan.battery_headroom_kwh, 5.0)
+        self.assertEqual(plan.forced_export_kwh, 0.0)
+
+    def test_a_big_day_overflows_even_a_half_empty_battery(self):
+        """16 kWh of surplus into 9 kWh of headroom: the difference has to leave."""
+        plan = self._plan(soc=45.0, peak_w=4000)
+        self.assertGreater(plan.forced_export_kwh, 0.0)
+        self.assertLess(plan.forced_export_kwh, plan.pv_surplus_kwh)

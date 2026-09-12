@@ -34,7 +34,7 @@ from deye_api import DeyeAPIError, DeyeClient, flatten_device_latest, parse_deye
 from config_loader import DEFAULT_ENV, load_config as load_env_config, make_deye_client
 
 SERVICE = "deye-solar-optimizer.service"
-VERSION = "3.1.6"
+VERSION = "3.1.7"
 
 PROFILES = {
     "export-first": {

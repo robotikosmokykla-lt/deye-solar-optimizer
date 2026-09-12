@@ -1,5 +1,33 @@
 # Changelog
 
+## v3.1.7 - 2026-09-12
+
+### Stop the clipping feedback loop
+
+The intraday bias corrector learned from measured PV without asking why it was low.
+Once the battery filled and the export cap closed, the array was clipped, measured
+PV fell, and the corrector read a sunny afternoon as overcast. That shrank the
+remaining-PV estimate, which shrank the export budget, which closed the cap further,
+which clipped harder: a positive feedback loop that ratchets export down on exactly
+the days with the most to send. Observed live at a bias of 0.54 on a clear day that
+was in fact running 73% above forecast.
+
+- `StateDB.last_unclipped_production()` finds the newest sample taken while the array
+  still had somewhere to put its surplus, and the bias is computed only up to there.
+- The ceiling is a band, not a line: a load transient can pull a full battery a point
+  or two below the threshold without giving it real room, and the array stays clipped
+  throughout. Only sustained charging proves a sink
+  (`DAY_INTRADAY_CLIP_SOC_HYSTERESIS_PCT`, default 5).
+- The source tag reports `_pre_clipping` when the tail was excluded.
+
+### Forced export when the battery has no room
+
+- Holding the export cap back only conserves energy if there is somewhere to conserve
+  it. Once the remaining PV surplus exceeds the battery's remaining headroom, the
+  excess leaves through the meter or is thrown away; conserving it is not one of the
+  options. The plan now floors the export budget at that forced amount.
+- Reported as `battery_headroom_kwh` and `forced_export_kwh`.
+
 ## v3.1.6 - 2026-09-09
 
 ### Curtailment estimate that can tell clipping from cloud
