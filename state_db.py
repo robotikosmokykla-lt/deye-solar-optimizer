@@ -82,6 +82,11 @@ CREATE TABLE IF NOT EXISTS writes (
 );
 CREATE INDEX IF NOT EXISTS idx_writes_ts ON writes(ts);
 CREATE INDEX IF NOT EXISTS idx_writes_order_id ON writes(order_id);
+CREATE TABLE IF NOT EXISTS observed_irradiance (
+  target_date TEXT PRIMARY KEY,
+  expected_kwh REAL NOT NULL,
+  fetched_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS api_events (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   ts TEXT NOT NULL,
@@ -467,6 +472,71 @@ class StateDB:
 
     def recent_api_failures(self, since_iso: str) -> int:
         return int(self.conn.execute("SELECT COUNT(*) c FROM api_events WHERE ts>=? AND ok=0", (since_iso,)).fetchone()["c"])
+
+    def set_observed_irradiance(self, date: dt.date, expected_kwh: float,
+                                now: dt.datetime) -> None:
+        """Store what the array should have produced from analysed irradiance."""
+        self.conn.execute(
+            "INSERT INTO observed_irradiance(target_date,expected_kwh,fetched_at) VALUES(?,?,?) "
+            "ON CONFLICT(target_date) DO UPDATE SET expected_kwh=excluded.expected_kwh,"
+            "fetched_at=excluded.fetched_at",
+            (date.isoformat(), float(expected_kwh), now.isoformat()),
+        )
+        self.conn.commit()
+
+    def observed_irradiance_kwh(self, date: dt.date) -> Optional[float]:
+        row = self.conn.execute(
+            "SELECT expected_kwh FROM observed_irradiance WHERE target_date=?",
+            (date.isoformat(),),
+        ).fetchone()
+        return float(row["expected_kwh"]) if row and row["expected_kwh"] is not None else None
+
+    def weather_accuracy_ratios_for_bucket(self, before_date: dt.date, days: int,
+                                           bucket: str) -> list[float]:
+        """Observed irradiance over the forecast issued at a given lead time."""
+        start = (before_date - dt.timedelta(days=int(days))).isoformat()
+        rows = self.conn.execute(
+            "SELECT o.expected_kwh obs, "
+            "  (SELECT f.expected_kwh FROM forecasts f WHERE f.target_date=o.target_date "
+            "     AND f.lead_bucket=? ORDER BY f.fetched_at ASC LIMIT 1) fc "
+            "FROM observed_irradiance o "
+            "WHERE o.target_date>=? AND o.target_date<? ORDER BY o.target_date",
+            (str(bucket), start, before_date.isoformat()),
+        ).fetchall()
+        out: list[float] = []
+        for r in rows:
+            if r["fc"] is None or float(r["fc"]) <= 1.0 or r["obs"] is None:
+                continue
+            ratio = float(r["obs"]) / float(r["fc"])
+            if 0.2 <= ratio <= 3.0:
+                out.append(ratio)
+        return out
+
+    def weather_accuracy_ratios(self, before_date: dt.date, days: int = 14) -> list[float]:
+        """Observed irradiance over forecast, per completed day.
+
+        Unlike the PV-based ratio this is not censored by clipping: it compares two
+        estimates of the same sky, so it measures forecast error alone. On an
+        export-capped site the PV-based ratio conflates a bad forecast with a full
+        battery, and drives the safe factor down every time the day was good.
+        """
+        start = (before_date - dt.timedelta(days=int(days))).isoformat()
+        rows = self.conn.execute(
+            "SELECT o.target_date d, o.expected_kwh obs, "
+            "  (SELECT expected_kwh FROM forecasts f WHERE f.target_date=o.target_date "
+            "   ORDER BY f.fetched_at ASC LIMIT 1) fc "
+            "FROM observed_irradiance o "
+            "WHERE o.target_date>=? AND o.target_date<? ORDER BY o.target_date",
+            (start, before_date.isoformat()),
+        ).fetchall()
+        out: list[float] = []
+        for r in rows:
+            if r["fc"] is None or float(r["fc"]) <= 1.0 or r["obs"] is None:
+                continue
+            ratio = float(r["obs"]) / float(r["fc"])
+            if 0.2 <= ratio <= 3.0:
+                out.append(ratio)
+        return out
 
     def last_unclipped_production(self, date: dt.date, soc_ceiling_pct: float,
                                   min_charge_w: float):

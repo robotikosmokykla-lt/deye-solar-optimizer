@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Local read-only HTML/API dashboard for Deye Solar Optimizer v3.1.7."""
+"""Local read-only HTML/API dashboard for Deye Solar Optimizer v3.1.8."""
 from __future__ import annotations
 import argparse, datetime as dt, json, mimetypes, os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -107,7 +107,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(history_summary(raw,days))
             if u.path=='/api/config':
                 return self.send_json({'strategy':raw.get('strategy',{}),'grid':raw.get('grid',{}),'battery':raw.get('battery',{}),'analytics':raw.get('analytics',{}),'economic':raw.get('economic',{}),'site':{'timezone':raw['site']['timezone']}})
-            if u.path=='/health': return self.send_json({'ok':True,'version':'3.1.7'})
+            if u.path=='/health': return self.send_json({'ok':True,'version':'3.1.8'})
             return self.send_json({'error':'not found'},404)
         except Exception as e:
             return self.send_json({'error':type(e).__name__,'message':str(e)},500)

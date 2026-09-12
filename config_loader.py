@@ -213,6 +213,8 @@ def load_config(path: str = DEFAULT_ENV) -> Dict[str, Any]:
             "probabilistic_min_days": _int(v, "FORECAST_PROBABILISTIC_MIN_DAYS", 10),
             "probabilistic_learning_days": _int(v, "FORECAST_PROBABILISTIC_LEARNING_DAYS", 45),
             "probabilistic_quantiles": _float_list(v, "FORECAST_PROBABILISTIC_QUANTILES", "0.10,0.20,0.50,0.80,0.90"),
+            "weather_ratio_enabled": _bool(v, "FORECAST_WEATHER_RATIO_ENABLED", True),
+            "observed_irradiance_days": _int(v, "FORECAST_OBSERVED_IRRADIANCE_DAYS", 7),
         },
         "morning_learning": {
             "enabled": _bool(v, "MORNING_LEARNING_ENABLED", True),

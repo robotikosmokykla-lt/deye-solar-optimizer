@@ -148,7 +148,7 @@ sleep 2
 systemctl --no-pager --full status deye-solar-optimizer.service || true
 
 echo
-echo "Upgrade to v3.1.7 complete."
+echo "Upgrade to v3.1.8 complete."
 echo "Runtime config: $ENV_FILE"
 echo "Code backup: $DEST/backups/$STAMP"
 echo "Config backup: $ETC/backups/$STAMP"

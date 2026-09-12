@@ -14,7 +14,7 @@ from state_db import StateDB
 from strategy_presets import active_strategy
 from config_loader import DEFAULT_ENV, load_config, make_deye_client
 
-VERSION = "3.1.7"
+VERSION = "3.1.8"
 
 
 def num(v: Any, default: float | None = None) -> float | None:

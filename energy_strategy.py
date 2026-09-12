@@ -304,10 +304,20 @@ def forecast_distribution(
     learning_days = max(min_samples, int(fu.get("probabilistic_learning_days", 45)))
     quantiles = list(fu.get("probabilistic_quantiles", [0.10, 0.20, 0.50, 0.80, 0.90]))
     target_date = target_date or now.date()
+    source = "pv"
     try:
         from state_db import forecast_lead_bucket
         bucket = forecast_lead_bucket(now, target_date)
-        ratios = db.forecast_accuracy_ratios_for_bucket(now.date(), learning_days, bucket)
+        ratios = []
+        # Observed irradiance first: measured PV is censored by clipping on an
+        # export-capped site, so a good day that filled the battery is scored as a
+        # forecast miss and the whole distribution shifts down.
+        if bool(fu.get("weather_ratio_enabled", True)) and hasattr(db, "weather_accuracy_ratios_for_bucket"):
+            wx = db.weather_accuracy_ratios_for_bucket(now.date(), learning_days, bucket)
+            if len(wx) >= min_samples:
+                ratios, source = wx, "wx"
+        if not ratios:
+            ratios = db.forecast_accuracy_ratios_for_bucket(now.date(), learning_days, bucket)
     except Exception:
         ratios = []
         bucket = "unknown"
@@ -320,7 +330,7 @@ def forecast_distribution(
         qf = max(0.0, min(1.0, float(q)))
         label = f"p{int(round(qf*100)):02d}"
         dist[label] = max(lo, min(hi, _quantile(ratios, qf)))
-    return dist, f"probabilistic_{bucket}_{len(ratios)}d"
+    return dist, f"probabilistic_{source}_{bucket}_{len(ratios)}d"
 
 
 def safe_forecast_factor(
@@ -350,6 +360,18 @@ def safe_forecast_factor(
     # Pre-probabilistic fallback keeps v3 behavior.
     learning_days = max(1, int(fu.get("learning_days", 14)))
     min_samples = max(1, int(fu.get("min_learning_days", 5)))
+
+    # Prefer observed irradiance over measured PV. Measured PV is censored by
+    # clipping on an export-capped site, so every good day that filled the battery
+    # is scored as a forecast miss and the factor ratchets down.
+    if bool(fu.get("weather_ratio_enabled", True)) and hasattr(db, "weather_accuracy_ratios"):
+        try:
+            wx = db.weather_accuracy_ratios(now.date(), learning_days)
+        except Exception:
+            wx = []
+        if len(wx) >= min_samples:
+            return max(lo, min(hi, _quantile(wx, quantile))), f"weather_irradiance_{len(wx)}d"
+
     if db is None or not hasattr(db, "forecast_accuracy_ratios"):
         return max(lo, min(hi, default)), "default"
     try:

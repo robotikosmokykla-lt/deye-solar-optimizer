@@ -32,7 +32,8 @@ from deye_api import (
     is_offline_error,
     parse_deye_timestamp,
 )
-from solar_forecast import DayForecast, ForecastError, PVArray, fetch_forecast
+from solar_forecast import (DayForecast, ForecastError, PVArray, fetch_forecast,
+                            fetch_observed_irradiance)
 from energy_strategy import (
     battery_target,
     build_day_energy_plan,
@@ -299,6 +300,39 @@ class Controller:
         self.forecast_fetched_at = now
         for f in fc.values():
             self.db.add_forecast(f)
+        self.refresh_observed_irradiance(now, arrays)
+
+    def refresh_observed_irradiance(self, now: dt.datetime, arrays) -> None:
+        """Record analysed irradiance for recent days, as an uncensored reference.
+
+        Measured PV cannot be used to score a forecast on an export-capped site: once
+        the battery fills the inverter clips the array, so a good day reads as a bad
+        forecast. This is the same tilted-irradiance variable, served from analysis
+        rather than prediction, and it is independent of the inverter.
+        """
+        if not bool(cget(self.cfg, "forecast_uncertainty", "weather_ratio_enabled", True)):
+            return
+        last = self.db.get("observed_irradiance_refreshed_on")
+        if last == now.date().isoformat():
+            return
+        days = int(cget(self.cfg, "forecast_uncertainty", "observed_irradiance_days", 7))
+        try:
+            observed = fetch_observed_irradiance(
+                latitude=float(self.cfg.raw["site"]["latitude"]),
+                longitude=float(self.cfg.raw["site"]["longitude"]),
+                timezone=self.cfg.raw["site"]["timezone"],
+                arrays=arrays,
+                performance_ratio=float(self.cfg.raw["pv"]["performance_ratio"]),
+                past_days=days,
+            )
+        except Exception as exc:
+            self.log.emit("WARN", "observed_irradiance_failed", error=str(exc))
+            return
+        for day, kwh in observed.items():
+            if day < now.date():
+                self.db.set_observed_irradiance(day, kwh, now)
+        self.db.set("observed_irradiance_refreshed_on", now.date().isoformat(), now)
+        self.log.emit("INFO", "observed_irradiance_refreshed", days=len(observed))
         self.db.add_api_event(now, "open_meteo", True, f"days={len(fc)}")
         tomorrow = fc.get(now.date() + dt.timedelta(days=1))
         self.log.emit(
@@ -1135,7 +1169,7 @@ class Controller:
             "INFO",
             "controller_start",
             pid=os.getpid(),
-            version="3.1.7",
+            version="3.1.8",
             dry_run=bool(cget(self.cfg, "control", "dry_run", True)),
             write_api=str(cget(self.cfg, "control", "write_api", "power_update")),
             control_mode="direct_write_only",

@@ -67,7 +67,12 @@ class AnalyticsTests(unittest.TestCase):
             db.conn.commit()
             dist,src=forecast_distribution(raw,db,now,target)
             self.assertIn("p50",dist)
-            self.assertTrue(src.startswith("probabilistic_day_ahead_"))
+            # The label now names the data source as well as the lead bucket, so a
+            # distribution learned from clipped PV is distinguishable from one
+            # learned from observed irradiance.
+            self.assertTrue(src.startswith("probabilistic_"), src)
+            self.assertIn("day_ahead", src)
+            self.assertIn("_pv_", src, "no observed irradiance stored, so PV is the source")
             db.close()
 
     def test_readonly_legacy_forecast_schema_degrades_gracefully(self):
@@ -266,3 +271,74 @@ class CurtailmentEstimateTests(unittest.TestCase):
                                        path, date, ivs)
         self.assertFalse(out["plausible"])
         self.assertIsNotNone(out["implied_kwh_per_kwp"])
+
+
+class WeatherRatioLearnerTests(unittest.TestCase):
+    """v3.1.8: learn forecast error from observed irradiance, not from clipped PV."""
+
+    def raw(self, **fu):
+        r = AnalyticsTests.raw(self)
+        r["forecast_uncertainty"] = dict(r["forecast_uncertainty"], **{
+            "probabilistic_enabled": True, "probabilistic_min_days": 3,
+            "probabilistic_learning_days": 30, "weather_ratio_enabled": True, **fu})
+        return r
+
+    def _seed(self, db, days, forecast_kwh, observed_kwh, measured_kwh, bucket="day_ahead"):
+        base = dt.date(2026, 9, 1)
+        for i in range(days):
+            d = base + dt.timedelta(days=i)
+            ts = dt.datetime.combine(d, dt.time(12, 0), tzinfo=ZoneInfo("UTC"))
+            db.conn.execute(
+                "INSERT INTO forecasts(fetched_at,target_date,sunrise,sunset,pv_wakeup,"
+                "useful_pv_start,expected_kwh,array_kwh_json,lead_bucket) VALUES(?,?,?,?,?,?,?,?,?)",
+                ((ts - dt.timedelta(days=1)).isoformat(), d.isoformat(), ts.isoformat(),
+                 ts.isoformat(), ts.isoformat(), ts.isoformat(), forecast_kwh, "{}", bucket))
+            db.conn.execute(
+                "INSERT INTO telemetry(observed_at,logger_at,soc,generation_power,"
+                "consumption_power,grid_power,battery_power,raw_json,daily_production_kwh) "
+                "VALUES(?,?,?,?,?,?,?,?,?)",
+                (ts.isoformat(), ts.isoformat(), 50, 0, 0, 0, 0, "{}", measured_kwh))
+            db.set_observed_irradiance(d, observed_kwh, ts)
+        db.conn.commit()
+
+    def test_clipping_does_not_drag_the_learned_factor_down(self):
+        """Forecast right, sky right, but PV censored: the factor must not fall."""
+        from energy_strategy import forecast_distribution
+        with tempfile.TemporaryDirectory() as td:
+            db = StateDB(os.path.join(td, "s.db"))
+            # Sky matched the forecast (30/30) but the array was clipped to 18 kWh.
+            self._seed(db, 6, forecast_kwh=30.0, observed_kwh=30.0, measured_kwh=18.0)
+            now = dt.datetime(2026, 9, 10, 12, 0, tzinfo=ZoneInfo("UTC"))
+            wx, src = forecast_distribution(self.raw(), db, now, dt.date(2026, 9, 11))
+            pv, psrc = forecast_distribution(self.raw(weather_ratio_enabled=False), db, now,
+                                             dt.date(2026, 9, 11))
+            db.close()
+        self.assertIn("_wx_", src)
+        self.assertIn("_pv_", psrc)
+        self.assertGreater(wx["p50"], pv["p50"] + 0.2,
+                           "the PV-based learner should be far more pessimistic")
+        self.assertGreaterEqual(wx["p50"], 0.95)
+
+    def test_a_genuinely_bad_forecast_is_still_learned(self):
+        from energy_strategy import forecast_distribution
+        with tempfile.TemporaryDirectory() as td:
+            db = StateDB(os.path.join(td, "s.db"))
+            # The sky really did under-deliver: observed well below forecast.
+            self._seed(db, 6, forecast_kwh=30.0, observed_kwh=18.0, measured_kwh=18.0)
+            now = dt.datetime(2026, 9, 10, 12, 0, tzinfo=ZoneInfo("UTC"))
+            dist, src = forecast_distribution(self.raw(), db, now, dt.date(2026, 9, 11))
+            db.close()
+        self.assertIn("_wx_", src)
+        self.assertLess(dist["p50"], 0.7)
+
+    def test_it_falls_back_to_pv_without_enough_observed_days(self):
+        from energy_strategy import forecast_distribution
+        with tempfile.TemporaryDirectory() as td:
+            db = StateDB(os.path.join(td, "s.db"))
+            self._seed(db, 6, forecast_kwh=30.0, observed_kwh=30.0, measured_kwh=18.0)
+            db.conn.execute("DELETE FROM observed_irradiance")
+            db.conn.commit()
+            now = dt.datetime(2026, 9, 10, 12, 0, tzinfo=ZoneInfo("UTC"))
+            dist, src = forecast_distribution(self.raw(), db, now, dt.date(2026, 9, 11))
+            db.close()
+        self.assertIn("_pv_", src)

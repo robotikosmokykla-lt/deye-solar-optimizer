@@ -1,5 +1,32 @@
 # Changelog
 
+## v3.1.8 - 2026-09-12
+
+### Learn the forecast error from the sky, not from the meter
+
+Measured PV cannot score a forecast on an export-capped site. Once the battery fills
+and the cap closes the inverter clips the array, so output is censored and every good
+day is recorded as a forecast miss. The safe factor then ratchets down, which lowers
+the export budget and the overnight target, which clips harder still.
+
+- Added `fetch_observed_irradiance()`: the same tilted-irradiance variable Open-Meteo
+  already supplies for the forecast, requested for past days, where it comes from
+  analysis rather than prediction. It is independent of the inverter and cannot be
+  censored by clipping. No API key and no extra service.
+- Stored per day in a new `observed_irradiance` table, refreshed once daily alongside
+  the forecast, and compared against the forecast issued at the same lead time.
+- The learned distribution prefers those ratios and falls back to the PV-based ones
+  when too few observed days exist. Its source label now names which was used.
+- Measured on this installation: the weather ratio runs about 0.84 while the PV ratio
+  reads 0.67, so roughly half the apparent forecast error was the array being clipped.
+
+### Not shipped
+
+An overnight headroom cap was written and then removed: probing showed the existing
+conservative morning requirement already tracks the forecast in the same direction,
+so the cap never bound. The overnight target being too high was a symptom of the
+censored safe factor above, not a missing mechanism.
+
 ## v3.1.7 - 2026-09-12
 
 ### Stop the clipping feedback loop

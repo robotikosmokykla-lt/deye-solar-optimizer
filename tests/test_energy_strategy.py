@@ -804,3 +804,4 @@ class ForcedExportTests(unittest.TestCase):
         plan = self._plan(soc=45.0, peak_w=4000)
         self.assertGreater(plan.forced_export_kwh, 0.0)
         self.assertLess(plan.forced_export_kwh, plan.pv_surplus_kwh)
+

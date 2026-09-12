@@ -72,6 +72,7 @@ def _request_array(
     timezone: str,
     array: PVArray,
     forecast_days: int = 3,
+    past_days: int = 0,
 ) -> Dict[str, Any]:
     params = {
         "latitude": f"{latitude:.6f}",
@@ -83,7 +84,59 @@ def _request_array(
         "tilt": f"{array.tilt_deg:.2f}",
         "azimuth": f"{array.azimuth_deg:.2f}",
     }
+    if past_days:
+        params["past_days"] = str(int(past_days))
     return _fetch_json("https://api.open-meteo.com/v1/forecast?" + urllib.parse.urlencode(params))
+
+
+def fetch_observed_irradiance(
+    latitude: float,
+    longitude: float,
+    timezone: str,
+    arrays: Iterable[PVArray],
+    performance_ratio: float,
+    past_days: int = 5,
+) -> Dict[dt.date, float]:
+    """What the array *should* have produced, from analysed irradiance for past days.
+
+    Learning forecast accuracy from measured PV is unsound on an export-capped site:
+    once the battery fills and the cap closes, the inverter clips the array, so
+    measured output is censored and every clipped day is scored as a forecast miss.
+    That drives the safe factor down, which lowers export, which clips harder.
+
+    Open-Meteo serves the same tilted-irradiance variable for past days from analysis
+    rather than prediction. It is independent of the inverter, so it cannot be
+    censored by clipping, and comparing it against what was forecast measures the
+    weather error alone.
+
+    Returns expected kWh per local date. Requires no API key and no extra service.
+    """
+    tz = ZoneInfo(timezone)
+    arrays = list(arrays)
+    if not arrays:
+        raise ForecastError("At least one PV array is required")
+
+    totals: Dict[dt.date, float] = {}
+    axis: List[str] | None = None
+    per_array: Dict[str, List[float]] = {}
+    for array in arrays:
+        raw = _request_array(latitude, longitude, timezone, array,
+                             forecast_days=1, past_days=past_days)
+        times = raw.get("minutely_15", {}).get("time") or []
+        vals = raw.get("minutely_15", {}).get("global_tilted_irradiance") or []
+        if not times or len(times) != len(vals):
+            raise ForecastError(f"Observed irradiance axis mismatch for array {array.name}")
+        if axis is None:
+            axis = times
+        elif len(times) != len(axis):
+            raise ForecastError("Observed irradiance arrays have different lengths")
+        per_array[array.name] = [float(v or 0.0) for v in vals]
+
+    for i, t in enumerate(axis or []):
+        day = _iso_local(t, tz).date()
+        watts = sum(max(0.0, per_array[a.name][i]) * a.kwp * performance_ratio for a in arrays)
+        totals[day] = totals.get(day, 0.0) + watts / 1000.0 * 0.25
+    return totals
 
 
 def fetch_forecast(
