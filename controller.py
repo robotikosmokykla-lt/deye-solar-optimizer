@@ -484,6 +484,24 @@ class Controller:
             pass
         return None
 
+    def track_morning_stability(self, now: dt.datetime, recommended: Optional[int],
+                                window_end: dt.datetime) -> None:
+        """Record how long the morning recommendation has held still.
+
+        Writing before it settles wastes the day's budget on a number that is about
+        to change; waiting forever wastes the morning. So the clock restarts whenever
+        the recommendation moves by more than a step, and the end of the restore
+        window forces a decision regardless.
+        """
+        if recommended is None:
+            return
+        tol = int(cget(self.cfg, "day_strategy", "morning_stable_tolerance_w", 100))
+        last = self.db.get("morning_rec_last_w")
+        if last is None or abs(int(recommended) - int(last)) > tol:
+            self.db.set("morning_rec_last_w", int(recommended), now)
+            self.db.set("morning_rec_stable_since", now.isoformat(), now)
+        self.db.set("morning_rec_force_by", window_end.isoformat(), now)
+
     def curtailment_override(
         self,
         now: dt.datetime,
@@ -570,12 +588,7 @@ class Controller:
                         )
                         reason = "morning_day_restore" if now < morning_window else "day_energy_budget"
                         if reason == "morning_day_restore":
-                            settle = int(cget(self.cfg, "day_strategy", "morning_settle_minutes", 40))
-                            self.db.set(
-                                "morning_settle_until",
-                                (today_floor_deadline + dt.timedelta(minutes=settle)).isoformat(),
-                                now,
-                            )
+                            self.track_morning_stability(now, recommended, morning_window)
                     except Exception as exc:
                         self.log.emit("WARN", "day_energy_plan_failed", error=str(exc), strategy=policy.tag)
                         # Conservative means fail closed on export. Risky explicitly
@@ -757,16 +770,28 @@ class Controller:
         if reason == "morning_day_restore":
             # The morning recommendation climbs as SOC rises and the forecast firms,
             # and each step clears the write threshold, so chasing it spends several
-            # writes inside an hour and leaves nothing for the afternoon. Wait for it
-            # to settle, then commit once. The cost is a few minutes at the old cap;
-            # the saving is the writes that let the afternoon be corrected at all.
-            settle_until = self.db.get("morning_settle_until")
-            if settle_until:
+            # writes inside an hour and leaves nothing for the afternoon.
+            #
+            # Wait for the number to stop moving, then commit once. A fixed delay is
+            # not enough: it expires while the value is still rising and locks in a
+            # figure that is already stale, which the write cooldown then holds for
+            # hours. Stability has to be measured, not assumed.
+            stable_since = self.db.get("morning_rec_stable_since")
+            deadline = self.db.get("morning_rec_force_by")
+            if stable_since:
                 try:
-                    until = dt.datetime.fromisoformat(settle_until)
-                    if now < until:
-                        mins = (until - now).total_seconds() / 60.0
-                        return False, f"morning recommendation still settling ({mins:.0f} min)"
+                    since = dt.datetime.fromisoformat(stable_since)
+                    need = int(cget(self.cfg, "day_strategy", "morning_stable_minutes", 20))
+                    forced = False
+                    if deadline:
+                        try:
+                            forced = now >= dt.datetime.fromisoformat(deadline)
+                        except Exception:
+                            forced = False
+                    held = (now - since).total_seconds() / 60.0
+                    if held < need and not forced:
+                        return False, (f"morning recommendation still moving "
+                                       f"(stable {held:.0f}/{need} min)")
                 except Exception:
                     pass
             start = now.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -1196,7 +1221,7 @@ class Controller:
             "INFO",
             "controller_start",
             pid=os.getpid(),
-            version="3.1.9",
+            version="3.1.10",
             dry_run=bool(cget(self.cfg, "control", "dry_run", True)),
             write_api=str(cget(self.cfg, "control", "write_api", "power_update")),
             control_mode="direct_write_only",

@@ -194,8 +194,8 @@ class MorningRampTests(unittest.TestCase):
     def make_ctl(self, td):
         ctl = V220ControllerTests.make_ctl(self, td)
         ctl.cfg.raw["day_strategy"].update({
-            "morning_settle_minutes": 40, "max_morning_writes_per_day": 1,
-            "max_budget_writes_per_day": 2,
+            "morning_stable_minutes": 20, "morning_stable_tolerance_w": 100,
+            "max_morning_writes_per_day": 1, "max_budget_writes_per_day": 2,
         })
         ctl.cfg.raw["control"].update({
             "max_successful_writes_per_day": 4, "max_order_submissions_per_day": 8,
@@ -204,26 +204,66 @@ class MorningRampTests(unittest.TestCase):
         })
         return ctl
 
-    def test_writes_are_held_until_the_recommendation_settles(self):
+    def test_a_still_rising_recommendation_keeps_resetting_the_clock(self):
+        """The 2026-09-14 regression: a fixed delay expired mid-ramp and locked in 200 W."""
         with tempfile.TemporaryDirectory() as td:
             ctl = self.make_ctl(td)
             handoff = dt.datetime(2026, 9, 12, 8, 50, tzinfo=ctl.tz)
-            ctl.db.set("morning_settle_until", (handoff + dt.timedelta(minutes=40)).isoformat(), handoff)
+            window_end = handoff + dt.timedelta(minutes=90)
             ctl.current_setting_w = 0
-            # The 400 -> 600 -> 1000 ramp all falls inside the settle window.
-            for offset in (0, 35, 38):
-                ok, why = ctl.can_write(handoff + dt.timedelta(minutes=offset), 1000, "morning_day_restore")
-                self.assertFalse(ok, f"+{offset} min should be held")
-                self.assertIn("settling", why)
-            ok, why = ctl.can_write(handoff + dt.timedelta(minutes=41), 1000, "morning_day_restore")
+            # Recommendation climbs 100 -> 500 over 50 minutes, a step every 10.
+            for i, rec in enumerate([100, 200, 300, 400, 500]):
+                t = handoff + dt.timedelta(minutes=10 * i)
+                ctl.track_morning_stability(t, rec, window_end)
+                ok, why = ctl.can_write(t, rec, "morning_day_restore")
+                self.assertFalse(ok, f"{rec} W at +{10*i} min should be held")
+                self.assertIn("still moving", why)
+            # It then holds at 500 for long enough to be trusted.
+            for extra in (10, 19):
+                t = handoff + dt.timedelta(minutes=40 + extra)
+                ctl.track_morning_stability(t, 500, window_end)
+                self.assertFalse(ctl.can_write(t, 500, "morning_day_restore")[0])
+            t = handoff + dt.timedelta(minutes=61)
+            ctl.track_morning_stability(t, 500, window_end)
+            ok, why = ctl.can_write(t, 500, "morning_day_restore")
             self.assertTrue(ok, why)
+            ctl.db.close()
+
+    def test_the_window_end_forces_a_decision(self):
+        """A recommendation that never settles must still be written before the window shuts."""
+        with tempfile.TemporaryDirectory() as td:
+            ctl = self.make_ctl(td)
+            handoff = dt.datetime(2026, 9, 12, 8, 50, tzinfo=ctl.tz)
+            window_end = handoff + dt.timedelta(minutes=90)
+            ctl.current_setting_w = 0
+            for i in range(10):
+                t = handoff + dt.timedelta(minutes=9 * i)
+                ctl.track_morning_stability(t, 100 + 200 * i, window_end)
+            late = window_end + dt.timedelta(minutes=1)
+            ctl.track_morning_stability(late, 9999, window_end)
+            ok, why = ctl.can_write(late, 1000, "morning_day_restore")
+            self.assertTrue(ok, why)
+            ctl.db.close()
+
+    def test_small_wobble_does_not_reset_the_clock(self):
+        with tempfile.TemporaryDirectory() as td:
+            ctl = self.make_ctl(td)
+            handoff = dt.datetime(2026, 9, 12, 8, 50, tzinfo=ctl.tz)
+            window_end = handoff + dt.timedelta(minutes=90)
+            ctl.current_setting_w = 0
+            # 400/500/400 is within the 100 W tolerance of the first value.
+            for i, rec in enumerate([400, 500, 400, 500]):
+                ctl.track_morning_stability(handoff + dt.timedelta(minutes=5 * i), rec, window_end)
+            t = handoff + dt.timedelta(minutes=25)
+            ctl.track_morning_stability(t, 400, window_end)
+            self.assertTrue(ctl.can_write(t, 400, "morning_day_restore")[0])
             ctl.db.close()
 
     def test_only_one_morning_write_per_day(self):
         with tempfile.TemporaryDirectory() as td:
             ctl = self.make_ctl(td)
             now = dt.datetime(2026, 9, 12, 9, 40, tzinfo=ctl.tz)
-            ctl.db.set("morning_settle_until", (now - dt.timedelta(minutes=10)).isoformat(), now)
+            ctl.db.set("morning_rec_stable_since", (now - dt.timedelta(minutes=30)).isoformat(), now)
             ctl.current_setting_w = 0
             self.assertTrue(ctl.can_write(now, 1000, "morning_day_restore")[0])
             ctl.db.add_write(now, 0, 1000, "morning_day_restore", 1, "success", "ok", accepted=True)
@@ -247,7 +287,7 @@ class MorningRampTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             ctl = self.make_ctl(td)
             now = dt.datetime(2026, 9, 12, 9, 0, tzinfo=ctl.tz)
-            ctl.db.set("morning_settle_until", (now + dt.timedelta(minutes=30)).isoformat(), now)
+            ctl.db.set("morning_rec_stable_since", now.isoformat(), now)
             ctl.current_setting_w = 0
             self.assertTrue(ctl.can_write(now, 1000, "day_energy_budget")[0])
             ctl.db.close()

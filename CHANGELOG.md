@@ -1,5 +1,23 @@
 # Changelog
 
+## v3.1.10 - 2026-09-14
+
+### Settle on stability, not on a timer
+
+v3.1.9 held the first morning write for a fixed delay. That was the wrong criterion:
+on 2026-09-14 the delay expired while the recommendation was still climbing, so the
+controller committed to 200 W at 10:20, the one-write allowance was then spent, and
+the 120-minute cooldown held that stale figure until 12:21 while the recommendation
+rose through 300, 400 and 500 W. Chasing the ramp wasted writes; a fixed delay wasted
+the morning instead.
+
+- The clock now restarts whenever the recommendation moves by more than
+  `DAY_MORNING_STABLE_TOLERANCE_W` (default 100), and a write is allowed once it has
+  held still for `DAY_MORNING_STABLE_MINUTES` (default 20).
+- The end of the morning restore window still forces a decision, so a recommendation
+  that never settles is not deferred indefinitely.
+- Small wobble inside the tolerance does not reset the clock.
+
 ## v3.1.9 - 2026-09-12
 
 ### Stop the morning ramp eating the day's write budget
