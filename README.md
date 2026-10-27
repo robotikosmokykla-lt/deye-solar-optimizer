@@ -336,7 +336,214 @@ After observation/commissioning, explicitly set `CONTROL_DRY_RUN=false` only whe
 
 ## Configuration
 
+Seasonal reserve defaults are available with `SEASON_MODE=auto` (opt-in; the
+template defaults to `off`). Winter is October–March in `SITE_TIMEZONE`; summer
+is April–September. `SEASON_MODE=winter` or `summer` pins a profile. Configure
+`SEASON_WINTER_MONTHS` for other climates.
+
+| Default | Winter | Summer |
+|---|---|---|
+| Overnight reserve, 17:00–07:00 | 20% | 18% |
+| Daytime floor, 07:00–17:00 | `BATTERY_SOC_FLOOR_PCT` (15%) | same |
+| Overnight grid export | 0 W | 0 W |
+| Native reserve charging | enabled, 20 A | enabled, 20 A |
+
+Explicit `NIGHT_MORNING_SOC_PCT` and `NIGHT_MAX_EXPORT_W` override seasonal
+defaults; leave the morning key empty to use the season. Profile reserve values
+and grid-charge current have `SEASON_*` keys in `.env.example`. Daytime export
+remains forecast controlled. No seasonal profile changes the battery chemistry,
+voltages, temperature protection, PV charging-current ceiling or maximum SOC.
+
+`sudo deyeopt-season` previews the resolved profile without API calls.
+`sudo deyeopt-season --apply` applies native reserve charging and verifies it.
+The installed timer checks at minutes 05/35 and after boot; once a profile is
+confirmed it makes no API calls until the season or relevant configuration
+changes. House forecast mode may fetch weather even when no inverter command is
+needed. The optimizer restarts after a transition to pick up the same defaults.
+Check `systemctl status deye-solar-season.timer` and `sudo deyeopt-status`.
+
+The native schedule must have six ordered slots including 07:00 and 17:00.
+Other slot times, powers, voltages and generator/sell flags are preserved. A
+custom schedule spanning either boundary is refused for manual review. The
+manager stops the optimizer while using the device command queue, defers pending
+or uncertain optimizer orders, saves accepted seasonal order IDs, and holds
+ambiguous/failed writes for two hours. Dry-run never calls the API. Results and
+backups live beside `state.db` in `season-state.json` and `profile-events.jsonl`.
+Manual inverter edits are left alone during an already-confirmed season; use
+`--apply --force` to deliberately reconcile them. Disabling seasonal automation
+does not undo native inverter settings already applied.
+
+### Occupied and winter-away modes
+
+Enable `HOUSE_RESERVE_ENABLED=true` with the temperature charge guard enabled.
+`HOUSE_MODE=occupied` remains the default; absence is never inferred automatically.
+
+```bash
+sudo deyeopt-mode status
+sudo deyeopt-mode winter-away --preview
+sudo deyeopt-mode winter-away
+sudo deyeopt-mode occupied
+```
+
+The mode command backs up the environment file, applies the native schedule under
+the shared command guards, verifies it, and restarts the optimizer. It returns an
+error if native settings cannot be confirmed. Set away mode at least a day before
+departure: 20→60% needs 6 kWh, approximately 12–15 hours at 10 A, or twice as long
+at 5 A. Switching modes does not command or change the house heating.
+
+| Behaviour | Occupied | Winter-away |
+|---|---|---|
+| Minimum reserve | seasonal baseline, raised toward 60% for cold risk | 60%, all six native slots |
+| Normal household use | above resolved reserve | only energy above storage reserve |
+| Grid reserve charging | 10 A; 5 A near cold cutoff | same |
+| Storage upper target | normal solar strategy | stop total charging at 60%; resume at/below 55% |
+| Deliberate battery export | forecast/export policy | 0 W |
+
+Away mode uses native SOC reserves, preserving discharge-power settings and the
+existing backup configuration. It does not physically disconnect the battery.
+The storage upper target is enforced by the cloud temperature guard, so telemetry
+latency can cause overshoot and connectivity loss can prevent automatic restart
+of charging. Local BMS protections remain essential.
+
+Occupied mode uses a 48-hour Open-Meteo air-temperature forecast, optionally
+anchored by recent LHMT observations (`HOUSE_WEATHER_STATION`, your nearest station ID).
+It assumes the entire predicted outdoor temperature drop could reach the indoor
+battery and also considers measured cooling during low-power periods. This is a
+conservative preparation scenario, **not a calibrated indoor-temperature model**.
+An 8°C thermostat is never treated as a guaranteed minimum cell temperature.
+
+| Estimated battery minimum over 48 hours | Reserve target |
+|---|---|
+| ≥15°C | 20% or higher seasonal/manual baseline |
+| 12–<15°C | 30% |
+| 10–<12°C | 40% |
+| 7–<10°C | 50% |
+| <7°C | 60% |
+
+This reserve curve deliberately rises as cold charging is derated: measured
+battery temperature alone can raise the minimum even without a forecast. The
+60% reserve is prepared below 7°C, before the default 5°C charge cutoff. Below 5°C,
+60% is a minimum to preserve, not permission to recharge a depleted pack while
+cold; the default measured-temperature charge stop takes priority unless the
+explicit custom maintenance exception described below is enabled. These SOC
+targets are the selected management policy, not Victron manufacturer SOC limits.
+
+Extra cold reserves apply throughout the day; the usual 15% morning-use window
+is retained when no extra cold reserve is needed. Raised cold-preparation goals
+require 24 hours of improving forecasts before release. Occupied mode can defer
+the forecast-only portion to expected solar, while retaining that higher goal:
+
+* Use a complete PV forecast available within the last three hours, with a safe
+  factor capped at 0.7. Ignore forecasts published after the planning time.
+* Estimate energy stored by one hour before sunset after learned household load,
+  inverter overhead, scheduled loads within that window, charge efficiency and
+  the measured-temperature charging-current ceiling.
+* Reduce the native reserve by at most that stored-energy budget. Never go below
+  the minimum required by measured battery temperature or the seasonal baseline.
+* Do not defer when the battery is below 10°C or the weather/cooling scenario
+  could bring it to 7°C before solar replenishment. Winter-away keeps its explicit
+  storage reserve regardless of expected sun.
+
+Cloudy, missing, incomplete or stale PV forecasts provide no solar credit. Missing
+weather or battery temperature holds the conservative reserve. Both the full
+cold goal and the solar-adjusted native reserve appear in the plan and status.
+This preserves battery headroom before sunny days without treating expected sun
+as permission to violate a measured temperature limit.
+
+Weather is refreshed hourly and reserves checked twice an
+hour. Unchanged profiles issue no device commands. Native grid charging drops
+to 5 A below 7°C and returns to 10 A at 9°C. The independent measured-temperature
+guard still blocks all charging below 5°C by default, at/above 50°C, or on stale
+telemetry. Only the explicit custom maintenance mode can change the 5°C rule;
+forecasts and low SOC do not override its hard temperature floor.
+
+`deyeopt-status` shows the house mode, estimated temperature, reserve and alerts.
+The timer journal records warnings near 7°C, blocked cold charging and stale
+data. `house-state.json` beside the state database records the confirmed plan
+and weather cache. No external notifications are sent. The weather/house profile
+overrides seasonal reserve/grid-charge defaults while enabled.
+
 The complete set of supported keys is documented in `.env.example`. Important groups:
+
+### Battery charging by temperature
+
+`BATTERY_TEMP_CHARGE_ENABLED=true` opts into a supplemental cloud guard for
+`MAX_CHARGE_CURRENT`, covering total solar and grid charging. It adopts the
+[Victron Lithium NG temperature chart](https://www.victronenergy.com/media/pg/Lithium_NG_battery_12%2C8_V/en/operation.html)
+as an explicitly selected policy; it does not establish limits certified for a
+different manufacturer's cells.
+
+| Reported battery temperature | Maximum charge rate |
+|---|---|
+| Below 5°C | 0 A |
+| 5°C to below 10°C | 0.2C |
+| 10°C to below 15°C | 0.3C |
+| 15°C to below 35°C | 0.5C |
+| 35°C to below 50°C | 0.3C |
+| 50°C or above | 0 A |
+
+Use the bank's nameplate `BATTERY_CHARGE_CAPACITY_AH` if known. Otherwise Ah is
+estimated from `BATTERY_EFFECTIVE_KWH * 1000 / 51.2` (this fallback assumes a
+51.2 V bank). At 15 kWh this yields rounded-down limits of 58/87/146 A. Each limit
+is also capped by `BATTERY_CHARGE_MAX_CURRENT_A`, which must not exceed the
+commissioned hardware/BMS ceiling. The separate 20 A grid-charge setting still
+applies; this guard never raises it.
+
+Reductions apply on the next control tick without waiting for the export write
+budget. Increases require a 2°C recovery margin and 15 minutes of fresh, stable
+readings (configurable), with at most four confirmed increases per local day.
+For example, after limiting to 0.3C, the guard waits for at least 17°C before
+returning to 0.5C. Missing, invalid, future-dated or older-than-10-minute temperature
+data requests 0 A. Unknown settings first establish a limit no higher than 0.2C.
+
+Temperature and export commands share one queue. Pending IDs and ambiguous
+submission guards survive restarts. Every successful change is independently
+read back; rejected or mismatched settings are reported as unverified. State and
+errors appear in `deyeopt-status`, the SQLite `charge_temperature_state` key, and
+the normal event log. Dry-run sends no API commands. Disabling the guard leaves
+the last inverter current limit in place; outstanding orders are still resolved.
+Confirmed failed/offline temperature submissions retain their own retry backoff
+without freezing unrelated export commands. An accepted pending command or an
+uncertain submission still blocks the shared device queue.
+
+Cloud telemetry and commands can be delayed or unavailable. This guard cannot
+replace local BMS low/high-temperature charging protection, and the one reported
+battery sensor is not proof of the minimum/maximum cell temperatures. The guard
+does not change battery type, charging voltages, SOC reserves or discharge limits.
+
+#### Optional custom cold maintenance
+
+`BATTERY_COLD_MAINTENANCE_ENABLED=true` selects a user-defined exception to
+Victron's 5°C minimum. It is disabled in the public template. It is **not** a
+manufacturer rating for unidentified cells, and it never bypasses the BMS.
+
+With the defaults, fresh reported battery temperature from 2°C to below 5°C
+permits at most **5 A and 0.02C**, also capped by the normal hardware ceiling.
+For a nominal 51.2 V bank this is roughly 250 W battery-side power before standby
+consumption, not a guaranteed net replenishment rate. Charging stops at the
+configured storage SOC, capped at 60%, and may resume at 5 SOC points below it.
+This cap applies in occupied and winter-away modes. Missing/invalid SOC or stale
+temperature blocks the exception.
+
+Below `BATTERY_COLD_MAINTENANCE_MIN_C` (default 2°C; cannot be configured below
+2°C), charging remains blocked. Restarting maintenance after a verified stop
+requires another 0.5°C margin and 15 minutes of stable readings. Once active,
+maintenance stays slow through the recovery band up to 7°C; the normal Victron
+bands resume afterward under their usual hysteresis and delay. Reserve top-ups
+are not blocked by the ordinary four-increases-per-day wear allowance, but they
+retain the SOC hysteresis, stability checks and command retry guards.
+
+This addresses standby drain only while temperature, grid and BMS permit
+charging. It does not make an unheated, connected battery safe for indefinite
+freezing-weather storage. Colder conditions require warming or actual isolation;
+a software 0 A charge limit does not stop inverter/BMS standby consumption.
+
+A fresh SOC reading of 10% or less triggers `critical_low_soc` in the event log,
+status report and dashboard alerts. It remains latched until a fresh reading
+reaches 15%, even while a control command is pending or telemetry becomes stale.
+It requests warming/isolation when charging is temperature-blocked; it does not
+permit frozen-cell charging and does not automatically disconnect the battery.
+No email or external notification is sent.
 
 ### Deye credentials
 

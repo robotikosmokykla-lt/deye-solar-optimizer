@@ -44,6 +44,7 @@ from energy_strategy import (
 from strategy_presets import active_strategy
 from config_loader import DEFAULT_ENV, load_config as load_env_config, make_deye_client
 from state_db import StateDB
+from charge_temperature import ChargeTemperatureGuard
 
 
 @dataclass
@@ -253,6 +254,7 @@ class Controller:
         self.db = StateDB(r["logging"]["state_db"])
         self.log = EventLog(r["logging"]["jsonl_log"])
         self.client = make_deye_client(r)
+        self.charge_temperature = ChargeTemperatureGuard(r, self.db, self.client, self.log)
         self.forecasts: Dict[dt.date, DayForecast] = {}
         self.forecast_fetched_at: Optional[dt.datetime] = None
         self.current_setting_w: Optional[int] = self.db.get("last_known_setting_w")
@@ -300,6 +302,16 @@ class Controller:
         self.forecast_fetched_at = now
         for f in fc.values():
             self.db.add_forecast(f)
+        self.db.add_api_event(now, "open_meteo", True, f"days={len(fc)}")
+        tomorrow = fc.get(now.date() + dt.timedelta(days=1))
+        self.log.emit(
+            "INFO",
+            "forecast_refreshed",
+            days=len(fc),
+            tomorrow_control_wakeup=control_pv_wakeup(self.cfg, tomorrow).isoformat() if tomorrow else None,
+            tomorrow_forecast_wakeup=tomorrow.pv_wakeup.isoformat() if tomorrow else None,
+            tomorrow_expected_kwh=round(tomorrow.expected_kwh, 2) if tomorrow else None,
+        )
         self.refresh_observed_irradiance(now, arrays)
 
     def refresh_observed_irradiance(self, now: dt.datetime, arrays) -> None:
@@ -333,16 +345,6 @@ class Controller:
                 self.db.set_observed_irradiance(day, kwh, now)
         self.db.set("observed_irradiance_refreshed_on", now.date().isoformat(), now)
         self.log.emit("INFO", "observed_irradiance_refreshed", days=len(observed))
-        self.db.add_api_event(now, "open_meteo", True, f"days={len(fc)}")
-        tomorrow = fc.get(now.date() + dt.timedelta(days=1))
-        self.log.emit(
-            "INFO",
-            "forecast_refreshed",
-            days=len(fc),
-            tomorrow_control_wakeup=control_pv_wakeup(self.cfg, tomorrow).isoformat() if tomorrow else None,
-            tomorrow_forecast_wakeup=tomorrow.pv_wakeup.isoformat() if tomorrow else None,
-            tomorrow_expected_kwh=round(tomorrow.expected_kwh, 2) if tomorrow else None,
-        )
 
     def get_forecast(self, day: dt.date) -> Optional[DayForecast]:
         return self.forecasts.get(day)
@@ -546,6 +548,9 @@ class Controller:
         snap: Optional[DeviceSnapshot] = None,
     ) -> Tuple[str, Optional[int], Optional[dt.datetime], str]:
         day_export = int(self.cfg.raw["grid"]["day_export_w"])
+        house = self.cfg.raw.get('house', {})
+        if house.get('enabled') and house['mode'] == 'winter-away':
+            return 'STORAGE', 0, None, 'winter_away_storage'
         policy = active_strategy(self.cfg.raw)
         if hasattr(self, "db") and self.db is not None:
             self.db.set("active_strategy", policy.tag, now)
@@ -625,7 +630,7 @@ class Controller:
                     if policy.night_mode == "save":
                         return "NIGHT", 0, morning.deadline, "strategy_save_night"
                     if soc <= floor_soc + 0.5 and morning.desired_soc_pct <= floor_soc + 0.5:
-                        return "NIGHT", None, morning.deadline, "soc_floor_reached"
+                        return "NIGHT", 0, morning.deadline, "soc_floor_reached"
                     return "NIGHT", morning.export_w, morning.deadline, morning.reason
                 if policy.tag in {"conservative", "save"}:
                     self.db.set("current_night_target_soc", soc, now)
@@ -648,7 +653,7 @@ class Controller:
                 if policy.night_mode == "save":
                     return "NIGHT", 0, morning.deadline, "strategy_save_night"
                 if soc <= floor_soc + 0.5 and morning.desired_soc_pct <= floor_soc + 0.5:
-                    return "NIGHT", None, morning.deadline, "soc_floor_reached"
+                    return "NIGHT", 0, morning.deadline, "soc_floor_reached"
                 return "NIGHT", morning.export_w, morning.deadline, morning.reason
 
         # If Open-Meteo is unavailable, conservative/save strategies fail closed on
@@ -1007,6 +1012,11 @@ class Controller:
             return "success"
         if code in (500, "500"):
             self.db.update_write_status(order_id, "failed", detail, now)
+            # A failed cloud acknowledgement does not prove the inverter retained
+            # its old cap: telemetry has shown a rejected 800 W order taking effect.
+            # Reconcile after the existing backoff instead of trusting cached zero.
+            self.current_setting_w = None
+            self.db.delete("last_known_setting_w")
             # A device-level rejection (Deye error 540) is not a transient cloud hiccup:
             # retrying it on the normal cadence only burns the daily submission ceiling,
             # so those get their own longer cooldown.
@@ -1096,6 +1106,8 @@ class Controller:
         order_state = self.poll_active_order(now)
 
         snap = self.fetch_device(now)
+        temperature_guard = getattr(self, "charge_temperature", None)
+        temperature_busy = temperature_guard.tick(now, snap, export_pending=self.active_order is not None) if temperature_guard else False
         if snap is None:
             return int(cget(self.cfg, "control", "loop_seconds", 60))
         # Do not extrapolate with a cached BatteryPower sample across an accepted
@@ -1140,6 +1152,8 @@ class Controller:
         detail_reason = reason
         if self.active_order is not None:
             action = f"order_{order_state}"
+        elif temperature_busy:
+            action = "temperature_charge_control"
         elif recommended is not None:
             delta = None if self.current_setting_w is None else abs(recommended - self.current_setting_w)
             material = self.current_setting_w is None or delta >= int(cget(self.cfg, "control", "min_write_delta_w", 200))

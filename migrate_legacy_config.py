@@ -50,7 +50,7 @@ def main() -> int:
     # to upgrade.sh with --water-heater-time, keeping this migrator reusable on GitHub.
     wh_time = str(wh.get("scheduled_time", "10:00"))
 
-    bundle_dir = "/srv/ollama/Projects/deye" if Path("/srv/ollama/Projects/deye").exists() else "/var/lib/deye-solar-optimizer/exports"
+    bundle_dir = str(c.get("logging", {}).get("bundle_dir", "/var/lib/deye-solar-optimizer/exports"))
 
     lines = [
         "# Deye Solar Optimizer v3.1.0 - migrated from legacy config.toml",

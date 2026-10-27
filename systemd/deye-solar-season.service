@@ -1,0 +1,10 @@
+[Unit]
+Description=Apply Deye seasonal battery reserves
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/deye-solar-optimizer/season_manager.py --apply
+TimeoutStartSec=5min
+UMask=0027

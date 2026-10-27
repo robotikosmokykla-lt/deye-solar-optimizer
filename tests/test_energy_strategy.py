@@ -13,6 +13,7 @@ from energy_strategy import (
     heater_remaining_kwh,
     night_floor_deadline,
     quantize_export_floor,
+    night_export_for_target_w,
 )
 from state_db import StateDB
 
@@ -46,6 +47,30 @@ class EnergyStrategyTests(unittest.TestCase):
     def test_quantize_export_floors_not_rounds_up(self):
         self.assertEqual(quantize_export_floor(999, 100, 1000), 900)
         self.assertEqual(quantize_export_floor(1100, 100, 1000), 1000)
+
+    def test_night_export_preserves_reserve_and_respects_zero_cap(self):
+        raw = self.raw()
+        now = dt.datetime(2026, 10, 24, 22, tzinfo=dt.timezone.utc)
+        deadline = now + dt.timedelta(hours=10)
+        # 60% -> 18% leaves 630 W total draw, or 385 W for export.
+        self.assertEqual(night_export_for_target_w(raw, 60, now, deadline, 18), 300)
+        raw['night_strategy']['max_export_w'] = 0
+        self.assertEqual(night_export_for_target_w(raw, 60, now, deadline, 18), 0)
+
+    def test_morning_reserve_exceeds_discharge_floor(self):
+        raw = self.raw()
+        raw['strategy'] = {'active': 'risky'}
+        raw['night_strategy']['morning_soc_pct'] = 18
+        raw['night_strategy']['max_export_w'] = 0
+        tz = ZoneInfo('Europe/Amsterdam')
+        now = dt.datetime(2026, 9, 4, 0, 40, tzinfo=tz)
+        with tempfile.TemporaryDirectory() as td:
+            db = StateDB(str(Path(td) / 'state.db'))
+            morning = build_morning_soc_plan(raw, db, self.poor_day(tz), now, 64)
+            self.assertEqual(morning.desired_soc_pct, 18)
+            self.assertEqual(morning.export_w, 0)
+            self.assertEqual(raw['battery']['soc_floor_pct'], 15)
+            db.close()
 
     def test_night_floor_deadline(self):
         tz = ZoneInfo("Europe/Amsterdam")

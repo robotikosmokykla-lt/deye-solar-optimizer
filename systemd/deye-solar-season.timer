@@ -1,0 +1,11 @@
+[Unit]
+Description=Check Deye seasonal and house reserves
+
+[Timer]
+OnCalendar=*-*-* *:05,35:00
+OnBootSec=2min
+Persistent=true
+Unit=deye-solar-season.service
+
+[Install]
+WantedBy=timers.target

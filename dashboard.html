@@ -46,6 +46,10 @@ h3{font-size:13px;font-weight:650;margin:0 0 8px;color:var(--ink-2)}
 .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 button,input,select{font:inherit;color:inherit;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:6px 10px}
 button{cursor:pointer} input[type=range]{width:240px;padding:0}
+button:disabled,select:disabled{cursor:default;opacity:.55}
+.mode-card{margin-top:14px}
+.mode-card .row{justify-content:space-between}
+.mode-status{margin-top:8px;min-height:1.5em}
 .tablewrap{overflow-x:auto;border:1px solid var(--border);border-radius:12px;background:var(--surface)}
 table{width:100%;border-collapse:collapse;min-width:640px}
 th,td{padding:8px 10px;border-bottom:1px solid var(--grid);text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
@@ -84,13 +88,30 @@ svg.chart{width:100%;height:auto;display:block;overflow:visible}
 
 <div class="top">
   <h1>Deye Solar Optimizer</h1>
-  <span class="pill">read-only analytics</span>
+  <span class="pill">live dashboard</span>
   <span style="flex:1"></span>
   <label class="small muted" for="date">Date</label><input id="date" type="date">
   <button id="refresh" type="button">Refresh</button>
   <span id="stamp" class="small muted"></span>
 </div>
 <div id="errors"></div>
+
+<section class="card mode-card" aria-labelledby="house-mode-heading">
+  <div class="row">
+    <div><h3 id="house-mode-heading">House mode</h3><span id="house-mode-current" class="pill">Loading current mode…</span></div>
+    <div class="row">
+      <label for="house-mode-select">Choose mode</label>
+      <select id="house-mode-select" disabled>
+        <option value="occupied">Occupied</option>
+        <option value="winter-away">Winter away</option>
+      </select>
+      <button id="house-mode-apply" type="button" disabled>Apply mode</button>
+    </div>
+  </div>
+  <p id="house-mode-hint" class="small muted">Occupied uses a reserve that adjusts ahead of cold weather. Winter away preserves a 60% storage reserve.</p>
+  <div id="house-mode-reserve" class="small"></div>
+  <div id="house-mode-status" class="mode-status small" role="status" aria-live="polite"></div>
+</section>
 
 <div class="tabs" role="tablist">
   <button type="button" role="tab" id="tab-overview" aria-selected="true" aria-controls="panel-overview">Overview</button>
@@ -197,6 +218,74 @@ async function get(u,label){
   }catch(e){ ERRORS.set(label,String(e.message||e)); showErrors(); throw e; }
 }
 const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let HOUSE_MODE=null, MODE_TIMER=null, MODE_SUBMITTING=false, MODE_DIRTY=false, MODE_ERROR='';
+const modeName=mode=>mode==='winter-away'?'Winter away':mode==='occupied'?'Occupied':'Not confirmed';
+function modeHint(){
+  const away=$('house-mode-select').value==='winter-away';
+  const storage=HOUSE_MODE?.storage_soc_pct??60;
+  $('house-mode-hint').textContent=away
+    ? `Winter away prepares a ${storage}% storage reserve, stops routine use at that reserve, and uses slow reserve charging. Charging temperature protection stays active.`
+    : 'Occupied allows normal battery use above a reserve that increases ahead of cold weather. Charging temperature protection stays active.';
+  const busy=MODE_SUBMITTING||HOUSE_MODE?.job?.state==='applying';
+  $('house-mode-apply').disabled=!HOUSE_MODE?.available||busy||($('house-mode-select').value===HOUSE_MODE?.confirmed_mode&&HOUSE_MODE?.job?.state!=='failed');
+}
+function renderHouseMode(info){
+  const first=HOUSE_MODE===null;
+  HOUSE_MODE=info;
+  const busy=MODE_SUBMITTING||info.job?.state==='applying';
+  $('house-mode-current').textContent='Current mode: '+modeName(info.confirmed_mode);
+  if(first||busy||!MODE_DIRTY)$('house-mode-select').value=info.job?.state==='applying'?info.job.mode:(info.requested_mode||'occupied');
+  if(info.job?.state==='confirmed'&&info.confirmed_mode===$('house-mode-select').value)MODE_DIRTY=false;
+  $('house-mode-select').disabled=!info.available||busy;
+  $('house-mode-apply').textContent=busy?'Applying…':'Apply mode';
+  $('house-mode-reserve').textContent=info.confirmed_mode
+    ? `Confirmed reserve: day ${fmt(info.day_reserve_pct,0)}% · night ${fmt(info.night_reserve_pct,0)}% · grid charging ${fmt(info.grid_charge_a,0)} A`
+    : 'The inverter has not confirmed a house mode yet.';
+  let message=info.job?.message||info.message||'';
+  if(info.job?.state==='applying')message=`Applying ${modeName(info.job.mode)}. The current mode above changes after inverter confirmation.`;
+  else if(info.requested_mode!==info.confirmed_mode&&info.available)message='The requested mode is not confirmed. Select the desired mode and apply to retry.';
+  if(MODE_ERROR&&info.job?.state!=='applying')message=MODE_ERROR;
+  $('house-mode-status').textContent=message;
+  $('house-mode-status').style.color=MODE_ERROR||info.job?.state==='failed'?'var(--critical)':'var(--ink-2)';
+  modeHint();
+}
+async function loadHouseMode(){
+  clearTimeout(MODE_TIMER);
+  try{
+    const response=await fetch('/api/mode',{cache:'no-store'});
+    if(!response.ok)throw new Error('Mode status is temporarily unavailable.');
+    renderHouseMode(await response.json());
+  }catch(error){
+    $('house-mode-status').textContent=error.message;
+    $('house-mode-apply').disabled=true;
+  }finally{
+    MODE_TIMER=setTimeout(loadHouseMode,HOUSE_MODE?.job?.state==='applying'?2000:30000);
+  }
+}
+async function applyHouseMode(){
+  if(!HOUSE_MODE?.available||MODE_SUBMITTING)return;
+  const mode=$('house-mode-select').value;
+  MODE_SUBMITTING=true;MODE_ERROR='';modeHint();$('house-mode-select').disabled=true;
+  $('house-mode-status').textContent=`Requesting ${modeName(mode)}…`;
+  try{
+    const response=await fetch('/api/mode',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':HOUSE_MODE.csrf_token},body:JSON.stringify({mode})});
+    const result=await response.json();
+    if(!response.ok)throw new Error(result.error||'Mode change could not be confirmed.');
+    HOUSE_MODE.job=result.job;
+    renderHouseMode(HOUSE_MODE);
+  }catch(error){
+    MODE_ERROR=error.message;
+    $('house-mode-status').textContent=error.message;
+    $('house-mode-status').style.color='var(--critical)';
+  }finally{
+    MODE_SUBMITTING=false;
+    $('house-mode-select').disabled=!HOUSE_MODE?.available||HOUSE_MODE?.job?.state==='applying';
+    modeHint();clearTimeout(MODE_TIMER);MODE_TIMER=setTimeout(loadHouseMode,2000);
+  }
+}
+$('house-mode-select').addEventListener('change',()=>{MODE_DIRTY=true;modeHint()});
+$('house-mode-apply').addEventListener('click',applyHouseMode);
+loadHouseMode();
 function tile(k,v,s=''){return `<div class="card tile"><div class="k">${esc(k)}</div><div class="v">${v}</div><div class="s">${esc(s)}</div></div>`}
 function kv(pairs){return pairs.map(([k,v])=>`<dt>${esc(k)}</dt><dd>${v}</dd>`).join('')}
 function table(rows,cols){
@@ -567,7 +656,7 @@ $('tab-control').onclick=()=>selectTab('control');
 let capTimer=null;
 $('cap').oninput=()=>{$('capv').textContent=$('cap').value+' W';clearTimeout(capTimer);capTimer=setTimeout(()=>loadDay(true).catch(()=>{}),200)};
 $('date').onchange=()=>{loadDay().catch(()=>{});if(!$('panel-control').hidden)loadControl().catch(()=>{})};
-$('refresh').onclick=()=>{loadLive().catch(()=>{});loadDay().catch(()=>{});loadHistory().catch(()=>{});if(!$('panel-control').hidden)loadControl().catch(()=>{})};
+$('refresh').onclick=()=>{loadHouseMode();loadLive().catch(()=>{});loadDay().catch(()=>{});loadHistory().catch(()=>{});if(!$('panel-control').hidden)loadControl().catch(()=>{})};
 
 (async function start(){
   try{await loadConfig()}catch(e){$('date').value=new Date().toISOString().slice(0,10)}

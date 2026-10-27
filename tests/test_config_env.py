@@ -9,6 +9,14 @@ from config_loader import load_config, redact_env_lines
 
 
 class EnvConfigTests(unittest.TestCase):
+    def test_cold_maintenance_requires_temperature_guard_and_bounded_settings(self):
+        from config_loader import validate_config
+        # Range checks run before unrelated credentials/site validation.
+        for options in [dict(cold_maintenance_min_c=0),
+                        dict(cold_maintenance_current_a=6),
+                        dict(cold_maintenance_enabled=True,enabled=False)]:
+            with self.assertRaises(ValueError):validate_config({'charge_temperature':options})
+
     def test_env_loads_site_pv_appliances_and_write_budgets(self):
         arrays = [{"name":"roof","kwp":10.5,"tilt_deg":35,"azimuth_deg":15}]
         with tempfile.TemporaryDirectory() as td:

@@ -106,10 +106,10 @@ cp -a "$ENV_FILE" "$ETC/backups/$STAMP/deye.env" 2>/dev/null || true
 cp -a "$LEGACY_CFG" "$ETC/backups/$STAMP/config.toml" 2>/dev/null || true
 
 install -d -m 755 -o root -g root "$DEST"
-for f in controller.py status.py preflight.py window_probe.py control_probe.py profile_manager.py day_planner.py strategy_manager.py day_export.py discover.py migrate_legacy_config.py analytics_cli.py dashboard_server.py; do
+for f in controller.py status.py preflight.py window_probe.py control_probe.py profile_manager.py day_planner.py strategy_manager.py day_export.py discover.py migrate_legacy_config.py analytics_cli.py dashboard_server.py season_manager.py mode_manager.py dashboard_modes.py; do
   install -m 755 "$SRC_DIR/$f" "$DEST/$f"
 done
-for f in deye_api.py solar_forecast.py energy_strategy.py strategy_presets.py state_db.py config_loader.py analytics_engine.py; do
+for f in deye_api.py solar_forecast.py energy_strategy.py strategy_presets.py state_db.py config_loader.py analytics_engine.py seasonal_policy.py charge_temperature.py house_policy.py; do
   install -m 644 "$SRC_DIR/$f" "$DEST/$f"
 done
 install -m 644 "$SRC_DIR/VERSION" "$DEST/VERSION"
@@ -117,6 +117,11 @@ install -m 644 "$SRC_DIR/dashboard.html" "$DEST/dashboard.html"
 
 install -m 644 "$SRC_DIR/systemd/deye-solar-optimizer.service" /etc/systemd/system/deye-solar-optimizer.service
 install -m 644 "$SRC_DIR/systemd/deye-solar-analytics.service" /etc/systemd/system/deye-solar-analytics.service
+install -m 644 "$SRC_DIR/systemd/deye-solar-mode.service" /etc/systemd/system/deye-solar-mode.service
+install -m 644 "$SRC_DIR/systemd/deye-solar-season.service" /etc/systemd/system/deye-solar-season.service
+install -m 644 "$SRC_DIR/systemd/deye-solar-season.timer" /etc/systemd/system/deye-solar-season.timer
+ln -sf /opt/deye-solar-optimizer/season_manager.py /usr/local/bin/deyeopt-season
+ln -sf /opt/deye-solar-optimizer/mode_manager.py /usr/local/bin/deyeopt-mode
 ln -sf "$DEST/status.py" /usr/local/bin/deyeopt-status
 ln -sf "$DEST/preflight.py" /usr/local/bin/deyeopt-preflight
 ln -sf "$DEST/discover.py" /usr/local/bin/deyeopt-discover
@@ -158,3 +163,5 @@ echo "  sudo deyeopt-strategy status"
 echo "  sudo deye-day-export --hours 6"
 echo "  sudo deyeopt-analytics"
 echo "  dashboard: http://127.0.0.1:8787/"
+systemctl enable --now deye-solar-season.timer
+systemctl enable --now deye-solar-mode.service

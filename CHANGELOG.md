@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+- Coordinate occupied-mode cold reserves with a discounted PV forecast, household
+  and scheduled loads, charging losses and temperature-based current limits.
+  Preserve measured-temperature minimum SOC while deferring forecast-only grid
+  top-ups to useful solar production when it is safe to wait.
+- Add opt-in seasonal defaults, native reserve/grid-charge reconciliation, and
+  explicit occupied/winter-away modes with an optional local dashboard broker.
+- Add opt-in temperature-based total-charge limits with persisted command IDs,
+  independent readback, recovery hysteresis and stale-telemetry protection.
+- Add a separately opt-in custom cold-maintenance exception, disabled in public
+  defaults, plus a latched 10% critical SOC alert. Neither bypasses BMS protection.
+- Keep confirmed temperature-command rejection backoffs from freezing unrelated
+  export commands; pending and ambiguous commands still serialize the queue.
+- Remove installation-specific source examples, expand diagnostic redaction and
+  runtime-data exclusions, and add a repeatable privacy checker. Existing Git
+  history requires its own audit and is not rewritten by these changes.
+
 ## v3.1.10 - 2026-09-14
 
 ### Settle on stability, not on a timer

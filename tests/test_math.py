@@ -41,7 +41,8 @@ class MathTests(unittest.TestCase):
         tz = ZoneInfo("Europe/Amsterdam")
         now = dt.datetime(2026, 9, 1, 22, 5, tzinfo=tz)
         target = dt.datetime(2026, 9, 2, 6, 47, tzinfo=tz)
-        self.assertEqual(calculate_night_export_w(self.cfg(), 56, now, target), 500)
+        # Round export down so quantization cannot consume the morning reserve.
+        self.assertEqual(calculate_night_export_w(self.cfg(), 56, now, target), 400)
 
     def test_control_wakeup_uses_sustained_useful_pv(self):
         tz = ZoneInfo("Europe/Amsterdam")

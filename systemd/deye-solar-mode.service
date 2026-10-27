@@ -1,0 +1,29 @@
+[Unit]
+Description=Deye local dashboard mode-control broker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=deyeopt
+RuntimeDirectory=deye-solar-mode
+RuntimeDirectoryMode=0750
+ExecStart=/usr/bin/python3 /opt/deye-solar-optimizer/dashboard_modes.py
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=9min
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ReadOnlyPaths=/opt/deye-solar-optimizer
+ReadWritePaths=/etc/deye-solar-optimizer /var/lib/deye-solar-optimizer /run/deye-solar-mode
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+UMask=0027
+
+[Install]
+WantedBy=multi-user.target

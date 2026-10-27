@@ -197,6 +197,8 @@ class DeviceRejectBackoffTests(unittest.TestCase):
         ctl.active_order = {"order_id": 999, "requested_w": 100}
         ctl.active_context = {}
         result = ctl.poll_active_order(now)
+        self.assertIsNone(ctl.current_setting_w)
+        self.assertIsNone(ctl.db.get("last_known_setting_w"))
         blocked_until = dt.datetime.fromisoformat(ctl.db.get("failed_order_retry_after"))
         ctl.db.close()
         return result, (blocked_until - now).total_seconds() / 60.0

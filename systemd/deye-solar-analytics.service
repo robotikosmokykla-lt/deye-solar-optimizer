@@ -1,5 +1,5 @@
 [Unit]
-Description=Deye Solar Optimizer read-only analytics dashboard
+Description=Deye Solar Optimizer analytics and house-mode dashboard
 After=deye-solar-optimizer.service
 Wants=deye-solar-optimizer.service
 

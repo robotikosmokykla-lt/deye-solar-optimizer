@@ -450,7 +450,9 @@ def night_export_for_target_w(
         - float(raw.get("load_model", {}).get("base_house_load_w", 115.0))
         - float(raw.get("load_model", {}).get("system_overhead_w", 130.0))
     )
-    return quantize_export_nearest(export_w, step, hard)
+    # Never round up into energy reserved for the morning.
+    night_cap = int(raw.get("night_strategy", {}).get("max_export_w", hard))
+    return quantize_export_floor(export_w, step, min(hard, night_cap))
 
 
 def projected_soc_at_deadline(
@@ -515,7 +517,10 @@ def build_morning_soc_plan(
     current_soc: float,
 ) -> MorningSocPlan:
     policy = active_strategy(raw)
-    floor = float(raw.get("battery", {}).get("soc_floor_pct", 15.0))
+    floor = max(
+        float(raw.get("battery", {}).get("soc_floor_pct", 15.0)),
+        float(raw.get("night_strategy", {}).get("morning_soc_pct", 0.0)),
+    )
     deadline, _morning_bias, _morning_source = adaptive_night_floor_deadline(raw, db, day, now)
 
     if now >= deadline:
@@ -535,11 +540,11 @@ def build_morning_soc_plan(
             export_w = night_export_for_target_w(raw, current_soc, now, deadline, desired)
             reason = "economic_battery_export_profitable"
         else:
-            desired = _conservative_required_morning_soc(raw, db, day, now, deadline)
+            desired = max(floor, _conservative_required_morning_soc(raw, db, day, now, deadline))
             export_w = night_export_for_target_w(raw, current_soc, now, deadline, desired)
             reason = "economic_preserve_for_self_use"
     else:
-        desired = _conservative_required_morning_soc(raw, db, day, now, deadline)
+        desired = max(floor, _conservative_required_morning_soc(raw, db, day, now, deadline))
         export_w = night_export_for_target_w(raw, current_soc, now, deadline, desired)
         reason = "forecast_protected_morning_reserve"
 
@@ -858,7 +863,10 @@ def build_day_energy_plan(
     # Subtracting it from export as well double-counts it: at high SOC the reserve
     # is already physically stored, and skimming it again suppresses export while
     # the battery is full and surplus PV is being curtailed.
-    floor_soc = float(raw.get("battery", {}).get("soc_floor_pct", 15.0))
+    floor_soc = max(
+        float(raw.get("battery", {}).get("soc_floor_pct", 15.0)),
+        float(raw.get("night_strategy", {}).get("morning_soc_pct", 0.0)),
+    )
     discharge_eff = _discharge_efficiency(raw)
     night_need, night_hours = night_energy_need_kwh(raw, db, day, tomorrow, now)
     if batt_kwh > 0:

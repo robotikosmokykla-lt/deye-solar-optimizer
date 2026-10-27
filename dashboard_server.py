@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Local read-only HTML/API dashboard for Deye Solar Optimizer v3.1.10."""
+"""Analytics dashboard with optional, brokered occupied/away mode control."""
 from __future__ import annotations
-import argparse, datetime as dt, json, mimetypes, os
+import argparse, datetime as dt, json, mimetypes, os, secrets, socket
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 from analytics_engine import control_log, day_report, history_summary
 from config_loader import DEFAULT_ENV, load_config
 from state_db import StateDB
+from dashboard_modes import broker_request, mode_status, MODES
 
 ROOT = Path(__file__).resolve().parent
 
@@ -88,14 +89,72 @@ class Handler(BaseHTTPRequestHandler):
     def send_json(self,obj,status=200):
         data=json.dumps(obj,ensure_ascii=False,separators=(',',':')).encode()
         self.send_response(status); self.send_header('Content-Type','application/json; charset=utf-8'); self.send_header('Cache-Control','no-store'); self.send_header('Content-Length',str(len(data))); self.end_headers(); self.wfile.write(data)
+    def raw_config(self):
+        return load_config(self.server.env_path) if getattr(self.server, 'env_path', None) else self.server.raw
+    def mode_info(self, raw):
+        info = mode_status(raw)
+        info['csrf_token'] = self.server.csrf_token
+        info['available'] = False
+        if not raw.get('analytics', {}).get('mode_control_enabled', False):
+            info['message'] = 'Mode switching is not enabled on this dashboard.'
+        elif raw.get('control', {}).get('dry_run', True):
+            info['message'] = 'Mode switching is unavailable during dry-run.'
+        elif not raw.get('charge_temperature', {}).get('enabled'):
+            info['message'] = 'Temperature charging protection must be enabled before switching modes.'
+        else:
+            try:
+                remote = broker_request({'op': 'status'})
+                if remote.get('error'):raise RuntimeError(remote['error'])
+                info.update(remote)
+                info['available'] = True
+            except (OSError, ValueError, RuntimeError):
+                info['message'] = 'Mode controls are temporarily unavailable.'
+        return info
+    def trusted_write_request(self, raw):
+        host = self.headers.get('Host', '')
+        hostname = urlparse('//' + host).hostname
+        allowed = {'localhost', '127.0.0.1', '::1', socket.gethostname().lower(), socket.getfqdn().lower()}
+        allowed.update(raw.get('analytics', {}).get('allowed_hosts', []))
+        allowed.add(str(self.server.server_address[0]).lower())
+        if not hostname or hostname.lower() not in allowed:
+            return False
+        origin = self.headers.get('Origin')
+        if origin:
+            parsed = urlparse(origin)
+            if parsed.scheme not in {'http', 'https'} or parsed.netloc.lower() != host.lower():return False
+        if self.headers.get('Sec-Fetch-Site') == 'cross-site':return False
+        token = self.headers.get('X-CSRF-Token', '')
+        return bool(token) and secrets.compare_digest(token, self.server.csrf_token)
+    def do_POST(self):
+        if urlparse(self.path).path != '/api/mode':return self.send_json({'error':'not found'},404)
+        try:
+            raw = self.raw_config()
+            if not self.trusted_write_request(raw):
+                return self.send_json({'error':'Mode request rejected. Refresh this dashboard and retry.'},403)
+            if self.headers.get_content_type() != 'application/json':
+                return self.send_json({'error':'Expected application/json'},415)
+            length = int(self.headers.get('Content-Length', '0'))
+            if not 0 < length <= 256:return self.send_json({'error':'Invalid request size'},400)
+            request = json.loads(self.rfile.read(length))
+            if not isinstance(request, dict) or set(request) != {'mode'} or request['mode'] not in MODES:
+                return self.send_json({'error':'Choose occupied or winter-away'},400)
+            info = self.mode_info(raw)
+            if not info['available']:return self.send_json({'error':info['message']},503)
+            result = broker_request({'op':'switch', 'mode':request['mode']})
+            return self.send_json(result, int(result.get('status',200)))
+        except (ValueError, TypeError):
+            return self.send_json({'error':'Invalid mode request'},400)
+        except Exception:
+            return self.send_json({'error':'Mode request could not be confirmed. Refresh the current mode before retrying.'},503)
     def do_GET(self):
         u=urlparse(self.path); q=parse_qs(u.query)
-        raw=self.server.raw
-        tz=ZoneInfo(raw['site']['timezone']); today=dt.datetime.now(tz).date()
         try:
+            raw=self.raw_config()
+            tz=ZoneInfo(raw['site']['timezone']); today=dt.datetime.now(tz).date()
             if u.path in ('/','/index.html'):
                 data=(ROOT/'dashboard.html').read_bytes(); self.send_response(200); self.send_header('Content-Type','text/html; charset=utf-8'); self.send_header('Cache-Control','no-store'); self.send_header('Content-Length',str(len(data))); self.end_headers(); self.wfile.write(data); return
             if u.path=='/api/live': return self.send_json(latest_live(raw))
+            if u.path=='/api/mode': return self.send_json(self.mode_info(raw))
             if u.path=='/api/day':
                 date=dt.date.fromisoformat(q.get('date',[today.isoformat()])[0]); cap=q.get('cap',[None])[0]; cap=int(cap) if cap not in (None,'') else None
                 return self.send_json(day_report(raw,date,cap))
@@ -114,7 +173,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
-    ap=argparse.ArgumentParser(description='Read-only Deye analytics dashboard')
+    ap=argparse.ArgumentParser(description='Deye analytics and optional house-mode dashboard')
     ap.add_argument('--env',default=DEFAULT_ENV); ap.add_argument('--bind'); ap.add_argument('--port',type=int)
     args=ap.parse_args(); raw=load_config(args.env)
     if not bool(raw.get('analytics',{}).get('enabled',True)):
@@ -122,7 +181,8 @@ def main():
         return
     bind=args.bind or raw.get('analytics',{}).get('bind','127.0.0.1'); port=args.port or int(raw.get('analytics',{}).get('port',8787))
     httpd=ThreadingHTTPServer((bind,port),Handler); httpd.raw=raw
-    print(f'Deye analytics dashboard: http://{bind}:{port}/ (read-only)')
+    httpd.env_path=args.env; httpd.csrf_token=secrets.token_urlsafe(32)
+    print(f'Deye analytics dashboard: http://{bind}:{port}/')
     httpd.serve_forever()
 
 if __name__=='__main__': main()

@@ -8,6 +8,8 @@ Real process environment variables override values loaded from the .env file.
 from __future__ import annotations
 
 import json
+import datetime as dt
+import math
 import os
 from pathlib import Path
 from typing import Any, Dict, Iterable
@@ -57,7 +59,7 @@ def _env(path: str | os.PathLike[str]) -> Dict[str, str]:
             values[key] = os.environ[key]
     # Also accept keys that exist only in the process environment.
     for key, value in os.environ.items():
-        if key.startswith(("DEYE_", "SITE_", "STRATEGY_", "BATTERY_", "GRID_", "LOAD_", "PV_", "NIGHT_", "WATER_", "COOKER_", "FORECAST_", "DAY_", "TELEMETRY_", "CONTROL_", "LOGGING_", "ANALYTICS_", "ECONOMIC_", "MORNING_")):
+        if key.startswith(("DEYE_", "SITE_", "STRATEGY_", "BATTERY_", "GRID_", "LOAD_", "PV_", "NIGHT_", "WATER_", "COOKER_", "FORECAST_", "DAY_", "TELEMETRY_", "CONTROL_", "LOGGING_", "ANALYTICS_", "ECONOMIC_", "MORNING_", "SEASON_", "HOUSE_")):
             values.setdefault(key, value)
     return values
 
@@ -123,8 +125,12 @@ def _scheduled_load(v: Dict[str, str], prefix: str, *, default_time: str, defaul
     }
 
 
-def load_config(path: str = DEFAULT_ENV) -> Dict[str, Any]:
+def load_config(path: str = DEFAULT_ENV, *, now: dt.datetime | None = None) -> Dict[str, Any]:
     v = _env(path)
+    from seasonal_policy import seasonal_defaults
+    season, defaults = seasonal_defaults(v, now=now)
+    # Explicit file/process settings always take precedence over seasonal defaults.
+    v = {**defaults, **{k: value for k, value in v.items() if value != ""}}
 
     arrays_text = str(_get(v, "PV_ARRAYS_JSON", "[]"))
     try:
@@ -145,6 +151,7 @@ def load_config(path: str = DEFAULT_ENV) -> Dict[str, Any]:
         })
 
     cfg: Dict[str, Any] = {
+        "season": season,
         "site": {
             "latitude": _float(v, "SITE_LATITUDE", 0.0),
             "longitude": _float(v, "SITE_LONGITUDE", 0.0),
@@ -160,10 +167,27 @@ def load_config(path: str = DEFAULT_ENV) -> Dict[str, Any]:
             "password": str(_get(v, "DEYE_PASSWORD", "")),
         },
         "strategy": {"active": str(_get(v, "STRATEGY_ACTIVE", "conservative"))},
+        "house": {
+            "enabled": _bool(v, "HOUSE_RESERVE_ENABLED", False),
+            "mode": str(_get(v, "HOUSE_MODE", "occupied")),
+            "storage_soc_pct": _int(v, "HOUSE_STORAGE_SOC_PCT", 60),
+            "weather_station": str(_get(v, "HOUSE_WEATHER_STATION", "")),
+        },
         "battery": {
             "effective_kwh": _float(v, "BATTERY_EFFECTIVE_KWH", 15.0),
             "soc_floor_pct": _float(v, "BATTERY_SOC_FLOOR_PCT", 15.0),
             "day_target_soc_pct": _float(v, "BATTERY_DAY_TARGET_SOC_PCT", 96.0),
+        },
+        "charge_temperature": {
+            "enabled": _bool(v, "BATTERY_TEMP_CHARGE_ENABLED", False),
+            "capacity_ah": _float(v, "BATTERY_CHARGE_CAPACITY_AH", _float(v, "BATTERY_EFFECTIVE_KWH", 15.0) * 1000 / 51.2),
+            "max_current_a": _int(v, "BATTERY_CHARGE_MAX_CURRENT_A", 160),
+            "max_age_minutes": _float(v, "BATTERY_TEMP_MAX_AGE_MINUTES", 10.0),
+            "hysteresis_c": _float(v, "BATTERY_TEMP_HYSTERESIS_C", 2.0),
+            "recovery_minutes": _float(v, "BATTERY_TEMP_RECOVERY_MINUTES", 15.0),
+            "cold_maintenance_enabled": _bool(v, "BATTERY_COLD_MAINTENANCE_ENABLED", False),
+            "cold_maintenance_min_c": _float(v, "BATTERY_COLD_MAINTENANCE_MIN_C", 2.0),
+            "cold_maintenance_current_a": _int(v, "BATTERY_COLD_MAINTENANCE_CURRENT_A", 5),
         },
         "maintenance": {
             "target_soc_pct": _float(v, "BATTERY_MAINTENANCE_TARGET_SOC_PCT", 100.0),
@@ -196,6 +220,8 @@ def load_config(path: str = DEFAULT_ENV) -> Dict[str, Any]:
             "arrays": clean_arrays,
         },
         "night_strategy": {
+            "morning_soc_pct": _float(v, "NIGHT_MORNING_SOC_PCT", _float(v, "BATTERY_SOC_FLOOR_PCT", 15.0)),
+            "max_export_w": _int(v, "NIGHT_MAX_EXPORT_W", _int(v, "GRID_EXPORT_HARD_LIMIT_W", 1000)),
             "morning_surplus_threshold_w": _float(v, "NIGHT_MORNING_SURPLUS_THRESHOLD_W", 350.0),
             "sustained_minutes": _int(v, "NIGHT_SUSTAINED_MINUTES", 30),
             "floor_lead_minutes": _int(v, "NIGHT_FLOOR_LEAD_MINUTES", 10),
@@ -285,6 +311,8 @@ def load_config(path: str = DEFAULT_ENV) -> Dict[str, Any]:
             "dry_run": _bool(v, "CONTROL_DRY_RUN", True),
         },
         "analytics": {
+            "mode_control_enabled": _bool(v, "ANALYTICS_MODE_CONTROL_ENABLED", False),
+            "allowed_hosts": [x.strip().lower() for x in str(_get(v, "ANALYTICS_ALLOWED_HOSTS", "")).split(',') if x.strip()],
             "enabled": _bool(v, "ANALYTICS_ENABLED", True),
             "bind": str(_get(v, "ANALYTICS_BIND", "127.0.0.1")),
             "port": _int(v, "ANALYTICS_PORT", 8787),
@@ -316,12 +344,34 @@ def load_config(path: str = DEFAULT_ENV) -> Dict[str, Any]:
             "bundle_dir": str(_get(v, "LOGGING_BUNDLE_DIR", "/var/lib/deye-solar-optimizer/exports")),
         },
     }
+    if cfg['house']['enabled']:
+        from house_policy import apply_plan, read_state
+        apply_plan(cfg, read_state(cfg).get('plan', {}))
     validate_config(cfg)
     return cfg
 
 
 def validate_config(raw: Dict[str, Any]) -> None:
     from strategy_presets import active_strategy
+
+    house = raw.get('house', {})
+    if house.get('mode', 'occupied') not in {'occupied', 'winter-away'}:
+        raise ValueError('HOUSE_MODE must be occupied or winter-away')
+    if not 40 <= house.get('storage_soc_pct', 60) <= 70:
+        raise ValueError('HOUSE_STORAGE_SOC_PCT must be 40..70')
+    if house.get('enabled') and not raw.get('charge_temperature', {}).get('enabled'):
+        raise ValueError('House reserve modes require BATTERY_TEMP_CHARGE_ENABLED=true')
+
+    temperature = raw.get("charge_temperature", {})
+    for key, low, high in [("capacity_ah", 1, 10000), ("max_current_a", 1, 1000),
+                           ("max_age_minutes", 1, 20), ("hysteresis_c", 0.5, 5),
+                           ("recovery_minutes", 5, 120), ("cold_maintenance_min_c", 2, 4.5),
+                           ("cold_maintenance_current_a", 1, 5)]:
+        value = float(temperature.get(key, low))
+        if not math.isfinite(value) or not low <= value <= high:
+            raise ValueError(f"charge_temperature.{key} must be within {low}..{high}")
+    if temperature.get('cold_maintenance_enabled') and not temperature.get('enabled'):
+        raise ValueError('Cold maintenance requires BATTERY_TEMP_CHARGE_ENABLED=true')
 
     limit = int(raw["grid"]["export_hard_limit_w"])
     day = int(raw["grid"]["day_export_w"])
@@ -330,8 +380,14 @@ def validate_config(raw: Dict[str, Any]) -> None:
     if not (0 <= day <= limit):
         raise ValueError("GRID_DAY_EXPORT_W must be between 0 and the hard limit")
     soc = float(raw["battery"]["soc_floor_pct"])
-    if not 5 <= soc <= 40:
+    base_soc = house.get('base_day_soc', soc) if house.get('enabled') else soc
+    if not 5 <= base_soc <= 40 or not 5 <= soc <= (house['storage_soc_pct'] if house.get('enabled') else 40):
         raise ValueError("BATTERY_SOC_FLOOR_PCT outside conservative range 5..40")
+    night = raw.get("night_strategy", {})
+    if not soc <= float(night.get("morning_soc_pct", soc)) <= 100:
+        raise ValueError("NIGHT_MORNING_SOC_PCT must be between the battery floor and 100")
+    if not 0 <= int(night.get("max_export_w", limit)) <= limit:
+        raise ValueError("NIGHT_MAX_EXPORT_W must be between 0 and the hard export limit")
     if float(raw["battery"]["effective_kwh"]) <= 0:
         raise ValueError("BATTERY_EFFECTIVE_KWH must be positive")
     if str(raw["control"].get("write_api", "power_update")) not in {"power_update", "dynamic_control"}:
@@ -368,7 +424,12 @@ def make_deye_client(raw: Dict[str, Any], timeout: int = 12):
 
 
 def redact_env_lines(path: str | os.PathLike[str]) -> str:
-    secret_keys = {"DEYE_APP_ID", "DEYE_APP_SECRET", "DEYE_LOGIN", "DEYE_PASSWORD"}
+    secret_keys = {
+        "DEYE_APP_ID", "DEYE_APP_SECRET", "DEYE_LOGIN", "DEYE_PASSWORD",
+        "DEYE_INVERTER_SN", "DEYE_STATION_ID", "SITE_LATITUDE", "SITE_LONGITUDE",
+        "HOUSE_WEATHER_STATION", "ANALYTICS_BIND", "ANALYTICS_ALLOWED_HOSTS",
+        "LOGGING_STATE_DB", "LOGGING_JSONL", "LOGGING_BUNDLE_DIR",
+    }
     out: list[str] = []
     for raw in Path(path).read_text(encoding="utf-8").splitlines():
         stripped = raw.strip()
@@ -376,7 +437,7 @@ def redact_env_lines(path: str | os.PathLike[str]) -> str:
             out.append(raw)
             continue
         key = stripped.split("=", 1)[0].replace("export ", "").strip()
-        if key in secret_keys:
+        if key in secret_keys or key.endswith(("_TOKEN", "_SECRET", "_PASSWORD", "_API_KEY")):
             prefix = raw[: raw.index("=") + 1]
             out.append(prefix + '"***REDACTED***"')
         else:

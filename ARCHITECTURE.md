@@ -32,6 +32,15 @@ Nothing is queued between ticks. Every tick re-derives the recommendation from
 scratch, so a decision is never stale: whatever the controller believes at the
 moment a write window opens is what gets written.
 
+An optional `ChargeTemperatureGuard` now runs after fetching telemetry and before
+export scheduling, including when SOC is invalid or telemetry fetching fails.
+It owns a separate persisted temperature-order record and blocks export commands
+while a charge-current write/readback is pending. Seasonal native-setting changes
+also check this record after stopping the optimizer. Temperature reductions are
+not subject to the export wear budget; recovery hysteresis, a settling interval,
+four daily increases and submission backoffs bound the additional writes. The
+local BMS remains the primary temperature protection.
+
 ### Phases
 
 | Phase | From | To | Plan |

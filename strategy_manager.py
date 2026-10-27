@@ -53,7 +53,12 @@ def update_active(path: Path, tag: str) -> Path:
             fh.write(payload)
             fh.flush()
             os.fsync(fh.fileno())
-        os.chmod(tmp_name, path.stat().st_mode & 0o777)
+        stat = path.stat()
+        os.chmod(tmp_name, stat.st_mode & 0o777)
+        try:
+            os.chown(tmp_name, stat.st_uid, stat.st_gid)
+        except (PermissionError, AttributeError):
+            pass
         os.replace(tmp_name, path)
     finally:
         try:

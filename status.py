@@ -169,6 +169,30 @@ def report(config_path: str) -> None:
     print(f"Deye Solar Optimizer v3.1.0 -- {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
     print(f"Health: {grade}  score={score}/100" + (f"  flags: {', '.join(flags)}" if flags else ""))
     print(f"Strategy:  {policy.tag} -- {policy.description}")
+    season = cfg.get("season", {})
+    print(f"Season:    {season.get('active', 'off')} (mode={season.get('mode', 'off')}); "
+          f"morning reserve={cfg['night_strategy']['morning_soc_pct']:g}%; "
+          f"night export<={cfg['night_strategy']['max_export_w']}W")
+    temperature = kv_get(conn, "charge_temperature_state", {}) or {}
+    house = cfg.get('house', {})
+    if house.get('enabled'):
+        plan = house.get('plan', {})
+        print(f"House:     {house['mode']}; reserve={plan.get('reserve_soc_pct')}%; "
+              f"grid charge={cfg['season']['grid_charge_ampere']}A; "
+              f"48h battery estimate={plan.get('estimated_min_battery_c')}C; "
+              f"reason={plan.get('reason')} alerts={plan.get('alerts', [])}")
+        print(f"SolarPrep: measured minimum={plan.get('measured_min_soc_pct')}%; "
+              f"cold goal={plan.get('cold_target_soc_pct')}%; "
+              f"solar credit={plan.get('solar_deferral_kwh', 0)}kWh; "
+              f"solar={plan.get('solar', {})}")
+    if cfg.get("charge_temperature", {}).get("enabled"):
+        print(f"ChargeTemp: battery={temperature.get('temperature_c')}C "
+              f"verified_limit={temperature.get('confirmed_a')}A "
+              f"recommendation={temperature.get('recommended_a')}A "
+              f"reason={temperature.get('reason', 'initializing')} "
+              f"pending={temperature.get('pending')} error={temperature.get('last_error')}")
+        if temperature.get('critical_low_soc'):
+            print(f"CRITICAL: SOC <=10% (held until 15%). {temperature.get('critical_action', '')}")
     print("-" * 86)
 
     if tel:

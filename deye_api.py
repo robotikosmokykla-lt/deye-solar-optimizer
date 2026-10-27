@@ -208,9 +208,8 @@ class DeyeClient:
     def set_battery_parameter(self, inverter_sn: str, parameter_type: str, value: int) -> Dict[str, Any]:
         """Low-level official battery-parameter endpoint.
 
-        v2.1 ships this for diagnostics/future use but the normal optimizer deliberately
-        does not change MAX_CHARGE_CURRENT dynamically: work-mode switching is much
-        lower churn and preserves the battery/BMS current ceiling.
+        MAX_CHARGE_CURRENT limits total solar/grid charging. Temperature control
+        changes it only on protection-band transitions and verifies readback.
         """
         ptype = str(parameter_type).strip().upper()
         data = self._request(
@@ -253,6 +252,17 @@ class DeyeClient:
             body["workMode"] = mode
         data = self._request(f"{self.base_url}/strategy/dynamicControl", body)
         return self._require_success(data, "strategy/dynamicControl")
+
+    def set_reserve_schedule(self, inverter_sn: str, *, gridChargeAction: str,
+                             gridChargeAmpere: int, timeUseSettingItems: list) -> Dict[str, Any]:
+        """One native reserve-charge order, preserving unrelated inverter fields."""
+        if gridChargeAction != "on" or not 1 <= gridChargeAmpere <= 200 or len(timeUseSettingItems) != 6:
+            raise ValueError("Invalid native reserve-charge request")
+        data = self._request(f"{self.base_url}/strategy/dynamicControl", {
+            "deviceSn": str(inverter_sn), "gridChargeAction": gridChargeAction,
+            "gridChargeAmpere": gridChargeAmpere, "timeUseSettingItems": timeUseSettingItems,
+        })
+        return self._require_success(data, "native reserve schedule")
 
     def dynamic_control_read(self, inverter_sn: str) -> Dict[str, Any]:
         data = self._request(
